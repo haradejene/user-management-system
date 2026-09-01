@@ -18,6 +18,11 @@ class User extends Authenticatable
     /** @use HasFactory<UserFactory> */
     use HasFactory, HasUuids, Notifiable, SoftDeletes;
 
+    protected $attributes = [
+        'status' => AccountStatus::Active->value,
+        'is_system_admin' => false,
+    ];
+
     /**
      * The attributes that are mass assignable.
      *
