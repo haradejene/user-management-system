@@ -1,2 +1,8 @@
-// Shared API response types are added with the API contract.
-export {};
+export interface ApiResponse<T> {
+  data: T;
+}
+
+export interface ValidationErrorResponse {
+  message: string;
+  errors: Record<string, string[]>;
+}

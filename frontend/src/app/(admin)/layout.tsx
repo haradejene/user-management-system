@@ -1,5 +1,6 @@
 export default function AdminLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
-  return <>{children}</>;
+  return <ProtectedShell>{children}</ProtectedShell>;
 }
+import { ProtectedShell } from "@/components/auth/ProtectedShell";
