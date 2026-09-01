@@ -68,14 +68,14 @@ class User extends Authenticatable
 
     public function companies(): BelongsToMany
     {
-        return $this->belongsToMany(Company::class)
+        return $this->belongsToMany(Company::class, 'company_user', 'user_id', 'company_id')
             ->withPivot('status')
             ->withTimestamps();
     }
 
     public function applications(): BelongsToMany
     {
-        return $this->belongsToMany(Application::class)
+        return $this->belongsToMany(Application::class, 'application_user', 'user_id', 'application_id')
             ->withPivot(['status', 'granted_by'])
             ->withTimestamps();
     }

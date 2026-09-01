@@ -35,7 +35,7 @@ class Application extends Model
 
     public function users(): BelongsToMany
     {
-        return $this->belongsToMany(User::class)
+        return $this->belongsToMany(User::class, 'application_user', 'application_id', 'user_id')
             ->withPivot(['status', 'granted_by'])
             ->withTimestamps();
     }
