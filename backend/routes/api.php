@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Applications\ApplicationAccessController;
 use App\Http\Controllers\Applications\ApplicationController;
 use App\Http\Controllers\Applications\ApplicationStatusController;
 use App\Http\Controllers\Auth\LoginController;
@@ -40,4 +41,8 @@ Route::prefix('admin')
         Route::apiResource('applications', ApplicationController::class)->only(['index', 'store', 'show', 'update']);
         Route::patch('applications/{application:public_id}/deactivate', [ApplicationStatusController::class, 'deactivate']);
         Route::patch('applications/{application:public_id}/activate', [ApplicationStatusController::class, 'activate']);
+        Route::get('users/{user:public_id}/applications', [ApplicationAccessController::class, 'forUser']);
+        Route::post('users/{user:public_id}/applications', [ApplicationAccessController::class, 'store']);
+        Route::delete('users/{user:public_id}/applications/{application:public_id}', [ApplicationAccessController::class, 'destroy']);
+        Route::get('applications/{application:public_id}/users', [ApplicationAccessController::class, 'forApplication']);
     });

@@ -3,6 +3,8 @@
 namespace App\Models;
 
 use App\Enums\AccountStatus;
+use App\Enums\ApplicationStatus;
+use App\Enums\MembershipStatus;
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Database\Factories\UserFactory;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
@@ -93,5 +95,17 @@ class User extends Authenticatable
     public function isCentralIamAdministrator(): bool
     {
         return $this->status === AccountStatus::Active && $this->is_system_admin;
+    }
+
+    public function hasAccessToApplication(Application $application): bool
+    {
+        if ($this->status !== AccountStatus::Active || $application->status !== ApplicationStatus::Active) {
+            return false;
+        }
+
+        return $this->applications()
+            ->whereKey($application->getKey())
+            ->wherePivot('status', MembershipStatus::Active->value)
+            ->exists();
     }
 }
