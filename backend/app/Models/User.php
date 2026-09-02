@@ -84,4 +84,9 @@ class User extends Authenticatable
             ->withPivot(['status', 'granted_by'])
             ->withTimestamps();
     }
+
+    public function isCentralIamAdministrator(): bool
+    {
+        return $this->status === AccountStatus::Active && $this->is_system_admin;
+    }
 }

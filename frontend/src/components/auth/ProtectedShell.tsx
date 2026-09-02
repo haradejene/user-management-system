@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/Button";
+import { Alert } from "@/components/ui/Alert";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { useAuth } from "@/hooks/useAuth";
 
@@ -31,6 +32,32 @@ export function ProtectedShell({
     await logout();
     router.replace("/login");
     router.refresh();
+  }
+
+  if (!user.is_system_admin) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-slate-50 px-6">
+        <div className="w-full max-w-lg space-y-6 rounded-xl border border-slate-200 bg-white p-8 shadow-sm">
+          <div>
+            <p className="text-sm font-medium text-slate-500">Central IAM</p>
+            <h1 className="mt-1 text-2xl font-semibold text-slate-900">
+              Administrator access required
+            </h1>
+          </div>
+          <Alert>
+            Your account is authenticated, but it is not authorized to use the
+            IAM administration interface.
+          </Alert>
+          <Button
+            variant="secondary"
+            isLoading={isLoggingOut}
+            onClick={handleLogout}
+          >
+            Logout
+          </Button>
+        </div>
+      </main>
+    );
   }
 
   return (
