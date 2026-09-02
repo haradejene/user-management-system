@@ -48,4 +48,14 @@ class CompanyPolicy
     {
         return false;
     }
+
+    public function changeStatus(User $user, Company $company): bool
+    {
+        return false;
+    }
+
+    public function manageMembers(User $user, Company $company): bool
+    {
+        return false;
+    }
 }

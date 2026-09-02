@@ -13,6 +13,10 @@ class Company extends Model
 {
     use HasFactory, HasUuids, SoftDeletes;
 
+    protected $attributes = [
+        'status' => MembershipStatus::Active->value,
+    ];
+
     protected $fillable = [
         'name',
         'status',
@@ -29,6 +33,11 @@ class Company extends Model
     public function uniqueIds(): array
     {
         return ['public_id'];
+    }
+
+    public function getRouteKeyName(): string
+    {
+        return 'public_id';
     }
 
     public function users(): BelongsToMany
