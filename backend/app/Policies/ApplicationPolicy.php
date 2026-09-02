@@ -53,4 +53,9 @@ class ApplicationPolicy
     {
         return false;
     }
+
+    public function changeStatus(User $user, Application $application): bool
+    {
+        return false;
+    }
 }

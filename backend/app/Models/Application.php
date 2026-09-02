@@ -13,6 +13,10 @@ class Application extends Model
 {
     use HasFactory, HasUuids, SoftDeletes;
 
+    protected $attributes = [
+        'status' => ApplicationStatus::Active->value,
+    ];
+
     protected $fillable = [
         'name',
         'slug',
@@ -31,6 +35,11 @@ class Application extends Model
     public function uniqueIds(): array
     {
         return ['public_id'];
+    }
+
+    public function getRouteKeyName(): string
+    {
+        return 'public_id';
     }
 
     public function users(): BelongsToMany

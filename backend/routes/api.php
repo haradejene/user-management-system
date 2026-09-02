@@ -1,5 +1,7 @@
 <?php
 
+use App\Http\Controllers\Applications\ApplicationController;
+use App\Http\Controllers\Applications\ApplicationStatusController;
 use App\Http\Controllers\Auth\LoginController;
 use App\Http\Controllers\Auth\LogoutController;
 use App\Http\Controllers\Auth\MeController;
@@ -34,4 +36,8 @@ Route::prefix('admin')
         Route::post('companies/{company:public_id}/members', [CompanyMembershipController::class, 'store']);
         Route::delete('companies/{company:public_id}/members/{user:public_id}', [CompanyMembershipController::class, 'destroy']);
         Route::get('users/{user:public_id}/companies', [CompanyMembershipController::class, 'forUser']);
+
+        Route::apiResource('applications', ApplicationController::class)->only(['index', 'store', 'show', 'update']);
+        Route::patch('applications/{application:public_id}/deactivate', [ApplicationStatusController::class, 'deactivate']);
+        Route::patch('applications/{application:public_id}/activate', [ApplicationStatusController::class, 'activate']);
     });
