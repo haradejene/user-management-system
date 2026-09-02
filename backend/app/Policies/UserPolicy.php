@@ -50,4 +50,9 @@ class UserPolicy
     {
         return false;
     }
+
+    public function changeStatus(User $user, User $subject): bool
+    {
+        return false;
+    }
 }

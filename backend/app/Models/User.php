@@ -66,6 +66,11 @@ class User extends Authenticatable
         return ['public_id'];
     }
 
+    public function getRouteKeyName(): string
+    {
+        return 'public_id';
+    }
+
     public function profile(): HasOne
     {
         return $this->hasOne(UserProfile::class);
