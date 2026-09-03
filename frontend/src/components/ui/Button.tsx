@@ -2,7 +2,7 @@ import type { ButtonHTMLAttributes } from "react";
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   isLoading?: boolean;
-  variant?: "primary" | "secondary";
+  variant?: "primary" | "secondary" | "danger";
 }
 
 export function Button({
@@ -13,10 +13,11 @@ export function Button({
   variant = "primary",
   ...props
 }: ButtonProps) {
-  const colors =
-    variant === "primary"
-      ? "bg-slate-900 text-white hover:bg-slate-700"
-      : "border border-slate-300 bg-white text-slate-700 hover:bg-slate-50";
+  const colors = {
+    primary: "bg-slate-900 text-white hover:bg-slate-700",
+    secondary: "border border-slate-300 bg-white text-slate-700 hover:bg-slate-50",
+    danger: "bg-red-700 text-white hover:bg-red-600",
+  }[variant];
 
   return (
     <button

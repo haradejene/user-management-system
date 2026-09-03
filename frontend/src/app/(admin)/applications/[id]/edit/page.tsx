@@ -1,7 +1,2 @@
-export default function EditApplicationPage() {
-  return (
-    <main>
-      <h1>Edit application</h1>
-    </main>
-  );
-}
+import { ApplicationForm } from "@/components/admin/ApplicationsAdmin";
+export default async function EditApplicationPage({ params }: PageProps<"/applications/[id]/edit">) { const { id } = await params; return <ApplicationForm id={id} />; }

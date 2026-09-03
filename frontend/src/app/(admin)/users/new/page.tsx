@@ -1,7 +1,2 @@
-export default function NewUserPage() {
-  return (
-    <main>
-      <h1>Create user</h1>
-    </main>
-  );
-}
+import { UserForm } from "@/components/admin/UserForm";
+export default function NewUserPage() { return <UserForm />; }

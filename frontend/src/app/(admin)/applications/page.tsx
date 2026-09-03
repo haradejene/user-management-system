@@ -1,7 +1,2 @@
-export default function ApplicationsPage() {
-  return (
-    <main>
-      <h1>Applications</h1>
-    </main>
-  );
-}
+import { ApplicationsList } from "@/components/admin/ApplicationsAdmin";
+export default function ApplicationsPage() { return <ApplicationsList />; }

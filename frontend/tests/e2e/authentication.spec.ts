@@ -18,9 +18,7 @@ test("register, login, refresh, me, logout, and dashboard protection", async ({
   await page.getByRole("button", { name: "Create account" }).click();
 
   await expect(page).toHaveURL(/\/dashboard$/);
-  await expect(
-    page.getByRole("heading", { name: "Welcome, Frontend Test User" }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Administrator access required" })).toBeVisible();
 
   await page.getByRole("button", { name: "Logout" }).click();
   await expect(page).toHaveURL(/\/login$/);
@@ -29,9 +27,10 @@ test("register, login, refresh, me, logout, and dashboard protection", async ({
   await page.getByLabel("Password").fill(password);
   await page.getByRole("button", { name: "Login" }).click();
   await expect(page).toHaveURL(/\/dashboard$/);
+  await expect(page.getByRole("heading", { name: "Administrator access required" })).toBeVisible();
 
   await page.reload();
-  await expect(page.getByText(email)).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Administrator access required" })).toBeVisible();
 
   const meResponse = await page.evaluate(async () => {
     const response = await fetch("http://localhost:8000/api/me", {

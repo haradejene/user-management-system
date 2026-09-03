@@ -1,7 +1,2 @@
-export default function CompanyDetailsPage() {
-  return (
-    <main>
-      <h1>Company details</h1>
-    </main>
-  );
-}
+import { CompanyDetails } from "@/components/admin/CompaniesAdmin";
+export default async function CompanyDetailsPage({ params }: PageProps<"/companies/[id]">) { const { id } = await params; return <CompanyDetails id={id} />; }

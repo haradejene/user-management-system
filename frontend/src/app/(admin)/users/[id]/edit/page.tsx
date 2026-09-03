@@ -1,7 +1,2 @@
-export default function EditUserPage() {
-  return (
-    <main>
-      <h1>Edit user</h1>
-    </main>
-  );
-}
+import { UserForm } from "@/components/admin/UserForm";
+export default async function EditUserPage({ params }: PageProps<"/users/[id]/edit">) { const { id } = await params; return <UserForm id={id} />; }

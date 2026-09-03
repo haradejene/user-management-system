@@ -1,7 +1,2 @@
-export default function CompaniesPage() {
-  return (
-    <main>
-      <h1>Companies</h1>
-    </main>
-  );
-}
+import { CompaniesList } from "@/components/admin/CompaniesAdmin";
+export default function CompaniesPage() { return <CompaniesList />; }
