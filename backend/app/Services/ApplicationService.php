@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Enums\ApplicationStatus;
+use App\Events\IamActivityOccurred;
 use App\Models\Application;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
@@ -30,7 +31,12 @@ class ApplicationService
     /** @param array{name: string, slug: string, description?: string|null} $attributes */
     public function create(array $attributes): Application
     {
-        return DB::transaction(fn (): Application => Application::query()->create($attributes));
+        return DB::transaction(function () use ($attributes): Application {
+            $application = Application::query()->create($attributes);
+            IamActivityOccurred::dispatch('application.created', $application);
+
+            return $application;
+        });
     }
 
     /** @param array{name?: string, slug?: string, description?: string|null} $attributes */
@@ -39,6 +45,12 @@ class ApplicationService
         return DB::transaction(function () use ($application, $attributes): Application {
             $application->update($attributes);
 
+            $changed = array_keys($application->getChanges());
+            $changed = array_values(array_diff($changed, ['updated_at', 'remember_token']));
+            if ($changed !== []) {
+                IamActivityOccurred::dispatch('application.updated', $application, ['changed_fields' => $changed]);
+            }
+
             return $application->refresh();
         });
     }
@@ -46,7 +58,14 @@ class ApplicationService
     public function changeStatus(Application $application, ApplicationStatus $status): Application
     {
         return DB::transaction(function () use ($application, $status): Application {
+            $previous = $application->status->value;
             $application->update(['status' => $status]);
+            if ($previous !== $status->value) {
+                IamActivityOccurred::dispatch('application.status_changed', $application, [
+                    'previous_status' => $previous,
+                    'status' => $status->value,
+                ]);
+            }
 
             return $application->refresh();
         });

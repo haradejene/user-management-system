@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Enums\AccountStatus;
+use App\Events\IamActivityOccurred;
 use App\Models\User;
 use Illuminate\Auth\Events\Registered;
 use Illuminate\Http\Request;
@@ -22,6 +23,8 @@ class AuthService
                 'password' => $attributes['password'],
                 'status' => AccountStatus::Active,
             ]);
+
+            IamActivityOccurred::dispatch('auth.registered', $user, actor: $user);
 
             event(new Registered($user));
 
@@ -43,6 +46,7 @@ class AuthService
         ], $credentials['remember'] ?? false);
 
         if (! $authenticated) {
+            IamActivityOccurred::dispatch('auth.login_failed', metadata: ['reason' => 'invalid_credentials']);
             throw ValidationException::withMessages([
                 'email' => ['The provided credentials are incorrect.'],
             ]);
@@ -52,7 +56,8 @@ class AuthService
         $user = Auth::guard('web')->user();
 
         if ($user->status !== AccountStatus::Active) {
-            $this->logout($request);
+            $this->clearSession($request);
+            IamActivityOccurred::dispatch('auth.login_failed', $user, ['reason' => 'inactive_account']);
 
             throw ValidationException::withMessages([
                 'email' => ['The provided credentials are incorrect.'],
@@ -60,11 +65,19 @@ class AuthService
         }
 
         $request->session()->regenerate();
+        IamActivityOccurred::dispatch('auth.login', $user, actor: $user);
 
         return $user;
     }
 
     public function logout(Request $request): void
+    {
+        $user = Auth::guard('web')->user();
+        IamActivityOccurred::dispatch('auth.logout', $user, actor: $user);
+        $this->clearSession($request);
+    }
+
+    private function clearSession(Request $request): void
     {
         Auth::guard('web')->logout();
         $request->session()->invalidate();

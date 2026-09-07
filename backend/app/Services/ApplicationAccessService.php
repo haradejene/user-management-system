@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Enums\ApplicationStatus;
 use App\Enums\MembershipStatus;
+use App\Events\IamActivityOccurred;
 use App\Models\Application;
 use App\Models\User;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
@@ -48,13 +49,19 @@ class ApplicationAccessService
                 'granted_by' => $administrator->getKey(),
             ]);
 
+            IamActivityOccurred::dispatch('application.access_granted', $user, ['application_id' => $application->public_id], $administrator);
+
             return $user->applications()->whereKey($application->getKey())->firstOrFail();
         });
     }
 
     public function revoke(User $user, Application $application): void
     {
-        DB::transaction(fn (): int => $user->applications()->detach($application->getKey()));
+        DB::transaction(function () use ($user, $application): void {
+            if ($user->applications()->detach($application->getKey()) > 0) {
+                IamActivityOccurred::dispatch('application.access_revoked', $user, ['application_id' => $application->public_id]);
+            }
+        });
     }
 
     public function isAllowed(User $user, Application $application): bool

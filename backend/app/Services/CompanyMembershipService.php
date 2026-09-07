@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Enums\MembershipStatus;
+use App\Events\IamActivityOccurred;
 use App\Models\Company;
 use App\Models\User;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
@@ -46,6 +47,8 @@ class CompanyMembershipService
                 'status' => MembershipStatus::Active->value,
             ]);
 
+            IamActivityOccurred::dispatch('company.member_added', $user, ['company_id' => $company->public_id]);
+
             return $company->users()->whereKey($user->getKey())->firstOrFail();
         });
     }
@@ -58,6 +61,10 @@ class CompanyMembershipService
             ]);
         }
 
-        DB::transaction(fn (): int => $company->users()->detach($user->getKey()));
+        DB::transaction(function () use ($company, $user): void {
+            if ($company->users()->detach($user->getKey()) > 0) {
+                IamActivityOccurred::dispatch('company.member_removed', $user, ['company_id' => $company->public_id]);
+            }
+        });
     }
 }

@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Enums\AccountStatus;
+use App\Events\IamActivityOccurred;
 use App\Models\User;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
@@ -32,7 +33,12 @@ class UserService
     /** @param array<string, mixed> $attributes */
     public function create(array $attributes): User
     {
-        return DB::transaction(fn (): User => User::query()->create($attributes));
+        return DB::transaction(function () use ($attributes): User {
+            $user = User::query()->create($attributes);
+            IamActivityOccurred::dispatch('user.created', $user);
+
+            return $user;
+        });
     }
 
     /** @param array<string, mixed> $attributes */
@@ -40,6 +46,12 @@ class UserService
     {
         return DB::transaction(function () use ($user, $attributes): User {
             $user->update(Arr::where($attributes, fn (mixed $value): bool => $value !== null));
+
+            $changed = array_keys($user->getChanges());
+            $changed = array_values(array_diff($changed, ['updated_at', 'remember_token']));
+            if ($changed !== []) {
+                IamActivityOccurred::dispatch('user.updated', $user, ['changed_fields' => $changed]);
+            }
 
             return $user->refresh();
         });
@@ -53,8 +65,15 @@ class UserService
             ]);
         }
 
-        return DB::transaction(function () use ($user, $status): User {
+        return DB::transaction(function () use ($user, $status, $actor): User {
+            $previous = $user->status->value;
             $user->update(['status' => $status]);
+            if ($previous !== $status->value) {
+                IamActivityOccurred::dispatch('user.status_changed', $user, [
+                    'previous_status' => $previous,
+                    'status' => $status->value,
+                ], $actor);
+            }
 
             return $user->refresh();
         });
