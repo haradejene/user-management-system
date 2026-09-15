@@ -8,7 +8,9 @@ Phase 1 of the company's centralized user-management and identity system.
 - `frontend`: Next.js App Router administrative interface
 - PostgreSQL: primary database
 
-OAuth 2.0, Laravel Passport, and OpenID Connect are intentionally deferred to a later phase.
+Passport is installed for OAuth 2.0 design/configuration preparation. OAuth routes remain
+disabled; OpenID Connect is deferred. See [the OAuth design](docs/oauth-design.md) for
+architecture, configuration, and the requirements before enabling authorization.
 
 ## Local prerequisites
 
