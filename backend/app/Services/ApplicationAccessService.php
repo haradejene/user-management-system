@@ -31,7 +31,10 @@ class ApplicationAccessService
 
     public function grant(User $user, Application $application, User $administrator): Application
     {
-        if ($application->status !== ApplicationStatus::Active) {
+        abort_unless($administrator->isCentralIamAdministrator(), 403);
+        abort_if($user->trashed() || ! User::query()->whereKey($user->getKey())->exists(), 404);
+
+        if ($application->trashed() || ! Application::query()->whereKey($application->getKey())->where('status', ApplicationStatus::Active->value)->exists()) {
             throw ValidationException::withMessages([
                 'application_id' => 'Access cannot be granted to an inactive application.',
             ]);

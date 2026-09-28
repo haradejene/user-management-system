@@ -83,6 +83,6 @@ class AuthorizationTest extends TestCase
         parent::setUp();
 
         $this->app['router']->get('/authorization-probe', fn () => ['authorized' => true])
-            ->middleware(['auth:sanctum', 'active', 'central-iam-admin']);
+            ->middleware(['api', 'auth:sanctum', 'active', 'central-iam-admin']);
     }
 }

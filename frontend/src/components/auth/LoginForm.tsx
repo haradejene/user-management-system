@@ -13,7 +13,7 @@ import { loginSchema, type LoginFormValues } from "@/schemas/auth";
 import { getApiErrorMessage } from "@/services/api-client";
 
 export function LoginForm() {
-  const { login } = useAuth();
+  const { login, error: sessionError } = useAuth();
   const router = useRouter();
   const [requestError, setRequestError] = useState<string | null>(null);
   const {
@@ -38,7 +38,7 @@ export function LoginForm() {
 
   return (
     <form className="space-y-4" onSubmit={handleSubmit(onSubmit)} noValidate>
-      {requestError ? <Alert>{requestError}</Alert> : null}
+      {requestError || sessionError ? <Alert>{requestError ?? sessionError}</Alert> : null}
       <FormField
         label="Email"
         type="email"

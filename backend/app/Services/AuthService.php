@@ -40,13 +40,28 @@ class AuthService
     /** @param array{email: string, password: string, remember?: bool} $credentials */
     public function login(array $credentials, Request $request): User
     {
-        $authenticated = Auth::guard('web')->attempt([
-            'email' => $credentials['email'],
-            'password' => $credentials['password'],
-        ], $credentials['remember'] ?? false);
+        $inactiveUser = null;
+        $authenticated = DB::transaction(function () use ($credentials, &$inactiveUser): bool {
+            // Serialize credential validation/remember-token writes with disabling.
+            $candidate = User::query()->where('email', $credentials['email'])->lockForUpdate()->first();
+
+            return Auth::guard('web')->attemptWhen([
+                'id' => $candidate?->getKey(),
+                'email' => $credentials['email'],
+                'password' => $credentials['password'],
+            ], function (User $user) use (&$inactiveUser): bool {
+                if (! $user->isActive()) {
+                    $inactiveUser = $user;
+
+                    return false;
+                }
+
+                return true;
+            }, $credentials['remember'] ?? false);
+        });
 
         if (! $authenticated) {
-            IamActivityOccurred::dispatch('auth.login_failed', metadata: ['reason' => 'invalid_credentials']);
+            IamActivityOccurred::dispatch('auth.login_failed', $inactiveUser, ['reason' => $inactiveUser ? 'inactive_account' : 'invalid_credentials']);
             throw ValidationException::withMessages([
                 'email' => ['The provided credentials are incorrect.'],
             ]);
@@ -55,7 +70,7 @@ class AuthService
         /** @var User $user */
         $user = Auth::guard('web')->user();
 
-        if ($user->status !== AccountStatus::Active) {
+        if (! $user->isActive()) {
             $this->clearSession($request);
             IamActivityOccurred::dispatch('auth.login_failed', $user, ['reason' => 'inactive_account']);
 

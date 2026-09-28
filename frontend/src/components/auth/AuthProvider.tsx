@@ -4,7 +4,7 @@ import { AxiosError } from "axios";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { AuthContext } from "@/hooks/useAuth";
-import { getApiErrorMessage } from "@/services/api-client";
+import { apiClient, getApiErrorMessage } from "@/services/api-client";
 import { authService } from "@/services/auth.service";
 import type { AuthUser, LoginInput, RegisterInput } from "@/types/auth";
 
@@ -14,6 +14,31 @@ export function AuthProvider({
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const interceptor = apiClient.interceptors.response.use(
+      (response) => response,
+      (requestError: unknown) => {
+        if (requestError instanceof AxiosError) {
+          const status = requestError.response?.status;
+          // A permission-only 403 must not sign out an otherwise valid user.
+          const inactiveAccount = status === 403 &&
+            requestError.response?.data?.message === "Your account is not active.";
+          if (status === 401 || inactiveAccount) {
+            setUser(null);
+            if (user) {
+              setError(inactiveAccount
+                ? "Your account is not active."
+                : "Your session has expired. Please log in again.");
+            }
+          }
+        }
+        return Promise.reject(requestError);
+      },
+    );
+
+    return () => apiClient.interceptors.response.eject(interceptor);
+  }, [user]);
 
   const refresh = useCallback(async (): Promise<void> => {
     setIsLoading(true);

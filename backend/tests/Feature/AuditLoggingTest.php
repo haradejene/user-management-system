@@ -196,7 +196,7 @@ class AuditLoggingTest extends TestCase
         $this->assertSame($admin->public_id, $log->actor_public_id);
         $this->assertSame('user', $log->subject_type);
         $this->assertSame($user->public_id, $log->subject_id);
-        $this->assertSame(['previous_status' => 'suspended', 'status' => 'active'], $log->metadata);
+        $this->assertSame(['previous_status' => 'suspended', 'status' => 'active', 'reason' => 'suspension_released'], $log->metadata);
     }
 
     public function test_application_activation_records_one_event_and_skips_repeat(): void

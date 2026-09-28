@@ -23,6 +23,7 @@ class User extends Authenticatable
     protected $attributes = [
         'status' => AccountStatus::Active->value,
         'is_system_admin' => false,
+        'session_version' => 0,
     ];
 
     /**
@@ -45,6 +46,7 @@ class User extends Authenticatable
     protected $hidden = [
         'password',
         'remember_token',
+        'session_version',
     ];
 
     /**
@@ -59,6 +61,7 @@ class User extends Authenticatable
             'password' => 'hashed',
             'status' => AccountStatus::class,
             'is_system_admin' => 'boolean',
+            'session_version' => 'integer',
         ];
     }
 
@@ -94,18 +97,30 @@ class User extends Authenticatable
 
     public function isCentralIamAdministrator(): bool
     {
-        return $this->status === AccountStatus::Active && $this->is_system_admin;
+        return ! $this->trashed() && $this->exists && static::query()
+            ->whereKey($this->getKey())
+            ->where('status', AccountStatus::Active->value)
+            ->where('is_system_admin', true)->exists();
+    }
+
+    public function isActive(): bool
+    {
+        return ! $this->trashed() && $this->exists && static::query()
+            ->whereKey($this->getKey())->where('status', AccountStatus::Active->value)->exists();
     }
 
     public function hasAccessToApplication(Application $application): bool
     {
-        if ($this->status !== AccountStatus::Active || $application->status !== ApplicationStatus::Active) {
+        if ($this->trashed() || $application->trashed() || ! $this->exists || ! $application->exists) {
             return false;
         }
 
-        return $this->applications()
-            ->whereKey($application->getKey())
-            ->wherePivot('status', MembershipStatus::Active->value)
+        return static::query()->whereKey($this->getKey())
+            ->where('status', AccountStatus::Active->value)
+            ->whereHas('applications', fn ($query) => $query
+                ->whereKey($application->getKey())
+                ->where('applications.status', ApplicationStatus::Active->value)
+                ->where('application_user.status', MembershipStatus::Active->value))
             ->exists();
     }
 }
