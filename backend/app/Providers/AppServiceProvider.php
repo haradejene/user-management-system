@@ -28,5 +28,8 @@ class AppServiceProvider extends ServiceProvider
                 Str::lower((string) $request->input('email')).'|'.$request->ip()
             );
         });
+        RateLimiter::for('register', function (Request $request): Limit {
+            return Limit::perMinute(5)->by($request->ip());
+        });
     }
 }

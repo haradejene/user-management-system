@@ -170,4 +170,23 @@ class AuthenticationTest extends TestCase
             'password' => 'wrong-password',
         ])->assertTooManyRequests();
     }
+
+    public function test_registration_is_rate_limited_by_ip(): void
+    {
+        for ($attempt = 1; $attempt <= 5; $attempt++) {
+            $this->withHeaders(self::SPA_HEADERS)->postJson('/api/register', [
+                'name' => "Registered {$attempt}",
+                'email' => "registered{$attempt}@example.test",
+                'password' => 'secure-password',
+                'password_confirmation' => 'secure-password',
+            ])->assertCreated();
+        }
+
+        $this->withHeaders(self::SPA_HEADERS)->postJson('/api/register', [
+            'name' => 'Blocked registration',
+            'email' => 'blocked-registration@example.test',
+            'password' => 'secure-password',
+            'password_confirmation' => 'secure-password',
+        ])->assertTooManyRequests();
+    }
 }

@@ -15,7 +15,7 @@ use App\Http\Controllers\Users\UserController;
 use App\Http\Controllers\Users\UserStatusController;
 use Illuminate\Support\Facades\Route;
 
-Route::post('/register', RegisterController::class);
+Route::post('/register', RegisterController::class)->middleware('throttle:register');
 Route::post('/login', LoginController::class)->middleware('throttle:login');
 
 Route::middleware('auth:sanctum')->group(function (): void {

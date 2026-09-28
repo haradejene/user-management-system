@@ -7,6 +7,7 @@ use App\Enums\ApplicationStatus;
 use App\Enums\MembershipStatus;
 use App\Models\Application;
 use App\Models\AuditLog;
+use App\Models\Company;
 use App\Models\User;
 use App\Services\ApplicationAccessService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -277,5 +278,19 @@ class ApplicationAccessManagementTest extends TestCase
             ->assertJsonPath('data.0.assignment_exists', true)
             ->assertJsonPath('data.0.effective_access', false)
             ->assertJsonPath('data.0.ineffective_reason', 'user_suspended');
+    }
+
+    public function test_company_membership_does_not_grant_application_access(): void
+    {
+        $user = User::factory()->create();
+        $company = Company::factory()->create();
+        $application = Application::factory()->create();
+        $user->companies()->attach($company, ['status' => MembershipStatus::Active->value]);
+
+        $this->assertFalse($user->hasAccessToApplication($application));
+        $this->assertDatabaseMissing('application_user', [
+            'user_id' => $user->id,
+            'application_id' => $application->id,
+        ]);
     }
 }

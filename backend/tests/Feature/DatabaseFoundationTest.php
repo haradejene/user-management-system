@@ -8,6 +8,7 @@ use App\Enums\MembershipStatus;
 use App\Models\Application;
 use App\Models\Company;
 use App\Models\User;
+use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Schema;
 use Tests\TestCase;
@@ -33,6 +34,7 @@ class DatabaseFoundationTest extends TestCase
         $this->assertTrue(Schema::hasTable('application_user'));
         $this->assertTrue(Schema::hasTable('sessions'));
         $this->assertTrue(Schema::hasTable('password_reset_tokens'));
+        $this->assertTrue(Schema::hasColumns('external_identities', ['id', 'user_id', 'issuer', 'subject', 'created_at', 'updated_at']));
     }
 
     public function test_eloquent_relationships_and_domain_casts_work(): void
@@ -87,5 +89,14 @@ class DatabaseFoundationTest extends TestCase
         $this->assertDatabaseMissing('user_profiles', ['user_id' => $user->id]);
         $this->assertDatabaseMissing('company_user', ['user_id' => $user->id]);
         $this->assertDatabaseMissing('application_user', ['user_id' => $user->id]);
+    }
+
+    public function test_external_identity_mapping_is_unique_by_issuer_and_subject(): void
+    {
+        $user = User::factory()->create();
+        $user->externalIdentities()->create(['issuer' => 'https://issuer.example', 'subject' => 'subject-1']);
+
+        $this->expectException(QueryException::class);
+        $user->externalIdentities()->create(['issuer' => 'https://issuer.example', 'subject' => 'subject-1']);
     }
 }
