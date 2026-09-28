@@ -89,6 +89,7 @@ export function ProtectedShell({
             ["/companies", "Companies"],
             ["/applications", "Applications"],
             ["/application-access", "Application access"],
+            ["/profile", "My profile"],
           ].map(([href, label]) => (
             <Link key={href} href={href} className={`whitespace-nowrap rounded-md px-3 py-2 text-sm ${pathname === href || pathname.startsWith(`${href}/`) ? "bg-slate-100 font-medium text-slate-900" : "text-slate-600 hover:bg-slate-50"}`}>
               {label}

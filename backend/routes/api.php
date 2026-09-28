@@ -10,6 +10,7 @@ use App\Http\Controllers\Auth\RegisterController;
 use App\Http\Controllers\Companies\CompanyController;
 use App\Http\Controllers\Companies\CompanyMembershipController;
 use App\Http\Controllers\Companies\CompanyStatusController;
+use App\Http\Controllers\Users\ProfileController;
 use App\Http\Controllers\Users\UserController;
 use App\Http\Controllers\Users\UserStatusController;
 use Illuminate\Support\Facades\Route;
@@ -20,12 +21,16 @@ Route::post('/login', LoginController::class)->middleware('throttle:login');
 Route::middleware('auth:sanctum')->group(function (): void {
     Route::post('/logout', LogoutController::class);
     Route::get('/me', MeController::class)->middleware('active');
+    Route::get('/profile', [ProfileController::class, 'own'])->middleware('active');
+    Route::patch('/profile', [ProfileController::class, 'updateOwn'])->middleware('active');
 });
 
 Route::prefix('admin')
     ->middleware(['auth:sanctum', 'active', 'central-iam-admin'])
     ->group(function (): void {
         Route::apiResource('users', UserController::class)->only(['index', 'store', 'show', 'update']);
+        Route::get('users/{user:public_id}/profile', [ProfileController::class, 'show']);
+        Route::patch('users/{user:public_id}/profile', [ProfileController::class, 'update']);
         Route::patch('users/{user:public_id}/deactivate', [UserStatusController::class, 'deactivate']);
         Route::patch('users/{user:public_id}/suspend', [UserStatusController::class, 'suspend']);
         Route::patch('users/{user:public_id}/reactivate', [UserStatusController::class, 'reactivate']);
