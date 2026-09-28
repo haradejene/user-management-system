@@ -5,8 +5,8 @@ import type { Application, ApplicationAccess, ApplicationUser } from "@/types/ap
 export interface ApplicationInput { name: string; slug: string; description?: string | null }
 
 export const applicationsService = {
-  async list(search = ""): Promise<PaginatedResponse<Application>> {
-    const response = await apiClient.get<PaginatedResponse<Application>>("/api/admin/applications", { params: { search: search || undefined, per_page: 100 } });
+  async list(search = "", page = 1, perPage = 100): Promise<PaginatedResponse<Application>> {
+    const response = await apiClient.get<PaginatedResponse<Application>>("/api/admin/applications", { params: { search: search || undefined, page, per_page: perPage } });
     return response.data;
   },
   async get(id: string): Promise<Application> {
@@ -25,13 +25,13 @@ export const applicationsService = {
     const response = await apiClient.patch<ApiResponse<Application>>(`/api/admin/applications/${id}/${action}`);
     return response.data.data;
   },
-  async forUser(userId: string): Promise<ApplicationAccess[]> {
-    const response = await apiClient.get<PaginatedResponse<ApplicationAccess>>(`/api/admin/users/${userId}/applications`, { params: { per_page: 100 } });
-    return response.data.data;
+  async forUser(userId: string, page = 1, perPage = 15): Promise<PaginatedResponse<ApplicationAccess>> {
+    const response = await apiClient.get<PaginatedResponse<ApplicationAccess>>(`/api/admin/users/${userId}/applications`, { params: { page, per_page: perPage } });
+    return response.data;
   },
-  async users(applicationId: string): Promise<ApplicationUser[]> {
-    const response = await apiClient.get<PaginatedResponse<ApplicationUser>>(`/api/admin/applications/${applicationId}/users`, { params: { per_page: 100 } });
-    return response.data.data;
+  async users(applicationId: string, page = 1, perPage = 15): Promise<PaginatedResponse<ApplicationUser>> {
+    const response = await apiClient.get<PaginatedResponse<ApplicationUser>>(`/api/admin/applications/${applicationId}/users`, { params: { page, per_page: perPage } });
+    return response.data;
   },
   async grant(userId: string, applicationId: string): Promise<ApplicationAccess> {
     const response = await apiClient.post<ApiResponse<ApplicationAccess>>(`/api/admin/users/${userId}/applications`, { application_id: applicationId });

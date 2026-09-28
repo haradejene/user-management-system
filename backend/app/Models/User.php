@@ -14,6 +14,7 @@ use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
+use Illuminate\Support\Facades\DB;
 
 class User extends Authenticatable
 {
@@ -111,16 +112,40 @@ class User extends Authenticatable
 
     public function hasAccessToApplication(Application $application): bool
     {
-        if ($this->trashed() || $application->trashed() || ! $this->exists || ! $application->exists) {
-            return false;
-        }
+        return $this->applicationAccessState($application)['effective_access'];
+    }
 
-        return static::query()->whereKey($this->getKey())
-            ->where('status', AccountStatus::Active->value)
-            ->whereHas('applications', fn ($query) => $query
-                ->whereKey($application->getKey())
-                ->where('applications.status', ApplicationStatus::Active->value)
-                ->where('application_user.status', MembershipStatus::Active->value))
-            ->exists();
+    /** @return array{assigned: bool, effective_access: bool, ineffective_reason: string|null} */
+    public function applicationAccessState(Application $application): array
+    {
+        $user = $this->exists ? static::withTrashed()->whereKey($this->getKey())->first() : null;
+        $registeredApplication = $application->exists
+            ? Application::withTrashed()->whereKey($application->getKey())->first()
+            : null;
+        $assignment = $user && $registeredApplication
+            ? DB::table('application_user')
+                ->where('user_id', $user->getKey())
+                ->where('application_id', $registeredApplication->getKey())
+                ->first()
+            : null;
+
+        $assigned = $assignment !== null;
+        $reason = match (true) {
+            $user === null => 'user_missing',
+            $user->deleted_at !== null => 'user_deleted',
+            $user->status !== AccountStatus::Active => 'user_'.$user->status->value,
+            $registeredApplication === null => 'application_missing',
+            $registeredApplication->deleted_at !== null => 'application_deleted',
+            $registeredApplication->status !== ApplicationStatus::Active => 'application_'.$registeredApplication->status->value,
+            ! $assigned => 'not_assigned',
+            $assignment->status !== MembershipStatus::Active->value => 'assignment_'.$assignment->status,
+            default => null,
+        };
+
+        return [
+            'assigned' => $assigned,
+            'effective_access' => $reason === null,
+            'ineffective_reason' => $reason,
+        ];
     }
 }

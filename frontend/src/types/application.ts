@@ -12,6 +12,9 @@ export interface Application {
 
 export interface ApplicationAccess extends Application {
   access_status: "active" | "inactive";
+  assignment_exists: boolean;
+  effective_access: boolean;
+  ineffective_reason: string | null;
   granted_at: string | null;
 }
 
@@ -21,5 +24,8 @@ export interface ApplicationUser {
   email: string;
   status: string;
   access_status: "active" | "inactive";
+  assignment_exists: boolean;
+  effective_access: boolean;
+  ineffective_reason: string | null;
   granted_at: string | null;
 }

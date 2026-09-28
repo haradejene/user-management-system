@@ -6,10 +6,12 @@ use App\Enums\AccountStatus;
 use App\Enums\ApplicationStatus;
 use App\Enums\MembershipStatus;
 use App\Models\Application;
+use App\Models\AuditLog;
 use App\Models\User;
 use App\Services\ApplicationAccessService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Schema;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 class ApplicationAccessManagementTest extends TestCase
@@ -186,5 +188,94 @@ class ApplicationAccessManagementTest extends TestCase
 
         $this->assertFalse(Schema::hasColumn('application_user', 'role'));
         $this->assertFalse(Schema::hasColumn('application_user', 'permissions'));
+    }
+
+    public static function eligibilityCases(): array
+    {
+        $cases = [];
+        foreach (['active', 'inactive', 'suspended', 'deleted'] as $user) {
+            foreach (['active', 'inactive', 'deleted'] as $application) {
+                foreach (['active', 'inactive', 'absent'] as $assignment) {
+                    $cases["{$user}-{$application}-{$assignment}"] = [$user, $application, $assignment];
+                }
+            }
+        }
+
+        return $cases;
+    }
+
+    #[DataProvider('eligibilityCases')]
+    public function test_access_state_distinguishes_assignment_from_effective_access(string $userState, string $applicationState, string $assignmentState): void
+    {
+        $user = User::factory()->create();
+        $application = Application::factory()->create();
+        if ($assignmentState !== 'absent') {
+            $user->applications()->attach($application, ['status' => $assignmentState]);
+        }
+        if ($userState === 'deleted') {
+            $user->delete();
+        } else {
+            $user->update(['status' => $userState]);
+        }
+        if ($applicationState === 'deleted') {
+            $application->delete();
+        } else {
+            $application->update(['status' => $applicationState]);
+        }
+
+        $state = $user->applicationAccessState($application);
+        $expected = $userState === 'active' && $applicationState === 'active' && $assignmentState === 'active';
+        $this->assertSame($assignmentState !== 'absent', $state['assigned']);
+        $this->assertSame($expected, $state['effective_access']);
+        $this->assertSame($expected, $user->hasAccessToApplication($application));
+        if ($expected) {
+            $this->assertNull($state['ineffective_reason']);
+        } else {
+            $this->assertNotNull($state['ineffective_reason']);
+        }
+    }
+
+    public function test_reactivation_restores_retained_active_assignment_and_revoke_is_idempotent(): void
+    {
+        $administrator = User::factory()->systemAdmin()->create();
+        $user = User::factory()->create();
+        $application = Application::factory()->create();
+        $user->applications()->attach($application, ['status' => MembershipStatus::Active->value, 'granted_by' => $administrator->id]);
+
+        $user->update(['status' => AccountStatus::Inactive]);
+        $this->assertFalse($user->hasAccessToApplication($application));
+        $user->update(['status' => AccountStatus::Active]);
+        $this->assertTrue($user->hasAccessToApplication($application));
+
+        app(ApplicationAccessService::class)->revoke($user, $application);
+        app(ApplicationAccessService::class)->revoke($user, $application);
+        $this->assertDatabaseMissing('application_user', ['user_id' => $user->id, 'application_id' => $application->id]);
+        $this->assertSame(1, AuditLog::where('action', 'application.access_revoked')->count());
+    }
+
+    public function test_access_list_is_paginated_and_reports_effective_state(): void
+    {
+        $administrator = User::factory()->systemAdmin()->create();
+        $user = User::factory()->create();
+        $applications = Application::factory()->count(21)->create();
+        foreach ($applications as $application) {
+            $user->applications()->attach($application, ['status' => MembershipStatus::Active->value, 'granted_by' => $administrator->id]);
+        }
+        $this->actingAs($administrator)
+            ->getJson("/api/admin/users/{$user->public_id}/applications?per_page=10&page=2")
+            ->assertOk()
+            ->assertJsonPath('meta.current_page', 2)
+            ->assertJsonPath('meta.last_page', 3)
+            ->assertJsonCount(10, 'data')
+            ->assertJsonPath('data.0.assignment_exists', true)
+            ->assertJsonPath('data.0.effective_access', true)
+            ->assertJsonPath('data.0.ineffective_reason', null);
+
+        $user->update(['status' => AccountStatus::Suspended]);
+        $this->actingAs($administrator)
+            ->getJson("/api/admin/users/{$user->public_id}/applications?per_page=10")
+            ->assertJsonPath('data.0.assignment_exists', true)
+            ->assertJsonPath('data.0.effective_access', false)
+            ->assertJsonPath('data.0.ineffective_reason', 'user_suspended');
     }
 }
