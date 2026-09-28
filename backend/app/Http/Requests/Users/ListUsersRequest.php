@@ -21,6 +21,7 @@ class ListUsersRequest extends FormRequest
             'search' => ['nullable', 'string', 'max:100'],
             'status' => ['nullable', Rule::enum(AccountStatus::class)],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
+            'page' => ['nullable', 'integer', 'min:1', 'max:100000'],
         ];
     }
 }

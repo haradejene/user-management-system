@@ -4,8 +4,8 @@ import type { Company } from "@/types/company";
 import type { User, UserInput } from "@/types/user";
 
 export const usersService = {
-  async list(search = "", page = 1, perPage = 100): Promise<PaginatedResponse<User>> {
-    const response = await apiClient.get<PaginatedResponse<User>>("/api/admin/users", { params: { search: search || undefined, page, per_page: perPage } });
+  async list(search = "", page = 1, perPage = 100, status?: string): Promise<PaginatedResponse<User>> {
+    const response = await apiClient.get<PaginatedResponse<User>>("/api/admin/users", { params: { search: search || undefined, page, per_page: perPage, status: status || undefined } });
     return response.data;
   },
   async get(id: string): Promise<User> {

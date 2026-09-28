@@ -36,6 +36,25 @@ class UserManagementTest extends TestCase
             ->assertJsonPath('meta.per_page', 10);
     }
 
+    public function test_user_listing_supports_pages_and_validates_bounds(): void
+    {
+        $administrator = User::factory()->systemAdmin()->create();
+        User::factory()->count(21)->create();
+
+        $this->actingAs($administrator)
+            ->getJson('/api/admin/users?page=2&per_page=10')
+            ->assertOk()
+            ->assertJsonPath('meta.current_page', 2)
+            ->assertJsonPath('meta.last_page', 3)
+            ->assertJsonPath('meta.per_page', 10)
+            ->assertJsonCount(10, 'data');
+
+        $this->actingAs($administrator)
+            ->getJson('/api/admin/users?page=0&per_page=101')
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['page', 'per_page']);
+    }
+
     public function test_administrator_can_view_a_user_by_public_id_without_sensitive_fields(): void
     {
         $administrator = User::factory()->systemAdmin()->create();

@@ -14,7 +14,7 @@ use Illuminate\Validation\ValidationException;
 
 class UserService
 {
-    /** @param array{search?: string|null, status?: string|null, per_page?: int|string|null} $filters */
+    /** @param array{search?: string|null, status?: string|null, per_page?: int|string|null, page?: int|string|null} $filters */
     public function paginate(array $filters): LengthAwarePaginator
     {
         return User::query()
@@ -27,7 +27,7 @@ class UserService
             ->when($filters['status'] ?? null, fn (Builder $query, string $status) => $query->where('status', $status))
             ->orderBy('name')
             ->orderBy('id')
-            ->paginate((int) ($filters['per_page'] ?? 15))
+            ->paginate((int) ($filters['per_page'] ?? 15), ['*'], 'page', (int) ($filters['page'] ?? 1))
             ->withQueryString();
     }
 
