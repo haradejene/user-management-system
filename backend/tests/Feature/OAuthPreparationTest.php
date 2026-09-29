@@ -2,19 +2,17 @@
 
 namespace Tests\Feature;
 
-use Illuminate\Support\Facades\Route;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
 class OAuthPreparationTest extends TestCase
 {
-    public function test_configuration_does_not_expose_oauth_or_client_registration_routes(): void
-    {
-        foreach (Route::getRoutes() as $route) {
-            $this->assertFalse(str_starts_with($route->getName() ?? '', 'passport.'));
-        }
+    use RefreshDatabase;
 
-        $this->getJson('/oauth/authorize')->assertNotFound();
-        $this->postJson('/oauth/token', ['grant_type' => 'authorization_code'])->assertNotFound();
+    public function test_oauth_endpoints_are_exposed_without_oidc_endpoints(): void
+    {
+        $this->get('/oauth/authorize')->assertStatus(400);
+        $this->postJson('/oauth/token', ['grant_type' => 'authorization_code'])->assertStatus(400);
         $this->postJson('/oauth/clients', ['name' => 'Unapproved client'])->assertNotFound();
         $this->getJson('/.well-known/openid-configuration')->assertNotFound();
     }

@@ -146,7 +146,7 @@ class ApplicationManagementTest extends TestCase
             ->assertForbidden();
     }
 
-    public function test_application_registry_does_not_create_passport_client_fields_or_tables(): void
+    public function test_application_registry_keeps_oauth_clients_in_a_separate_linked_table(): void
     {
         $this->assertTrue(Schema::hasColumns('applications', [
             'public_id',
@@ -159,6 +159,7 @@ class ApplicationManagementTest extends TestCase
         ]));
         $this->assertFalse(Schema::hasColumn('applications', 'secret'));
         $this->assertFalse(Schema::hasColumn('applications', 'redirect_uris'));
-        $this->assertFalse(Schema::hasTable('oauth_clients'));
+        $this->assertTrue(Schema::hasTable('oauth_clients'));
+        $this->assertTrue(Schema::hasColumn('oauth_clients', 'application_id'));
     }
 }

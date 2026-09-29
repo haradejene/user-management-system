@@ -1,7 +1,7 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 
@@ -15,6 +15,7 @@ import { getApiErrorMessage } from "@/services/api-client";
 export function LoginForm() {
   const { login, error: sessionError } = useAuth();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [requestError, setRequestError] = useState<string | null>(null);
   const {
     formState: { errors, isSubmitting },
@@ -29,8 +30,15 @@ export function LoginForm() {
     setRequestError(null);
     try {
       await login(values);
-      router.replace("/dashboard");
-      router.refresh();
+      if (searchParams.get("oauth_continue") === "1") {
+        const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+        // OAuth continuation intentionally leaves the Next.js origin for the IAM backend.
+        // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+        window.location.assign(`${apiBase}/oauth/continue`);
+      } else {
+        router.replace("/dashboard");
+        router.refresh();
+      }
     } catch (error) {
       setRequestError(getApiErrorMessage(error));
     }
