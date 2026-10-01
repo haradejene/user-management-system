@@ -15,7 +15,7 @@ class CompanyService
     public function paginate(array $filters): LengthAwarePaginator
     {
         return Company::query()
-            ->when($filters['search'] ?? null, fn (Builder $query, string $search) => $query->where('name', 'like', "%{$search}%"))
+            ->when($filters['search'] ?? null, fn (Builder $query, string $search) => $query->whereLike('name', "%{$search}%"))
             ->when($filters['status'] ?? null, fn (Builder $query, string $status) => $query->where('status', $status))
             ->orderBy('name')
             ->orderBy('id')

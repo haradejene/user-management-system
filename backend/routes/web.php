@@ -1,11 +1,18 @@
 <?php
 
 use App\Http\Controllers\Oidc\JwksController;
+use App\Http\Controllers\Oidc\UserInfoController;
+use App\Http\Middleware\RequireOidcBearerToken;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
 // Public key publication does not read or create an IAM browser session.
 Route::get('/oauth/jwks', JwksController::class)->withoutMiddleware('web')->name('oidc.jwks');
+
+Route::match(['GET', 'POST'], '/oauth/userinfo', UserInfoController::class)
+    ->withoutMiddleware('web')
+    ->middleware([RequireOidcBearerToken::class, 'oauth.iam-access'])
+    ->name('oidc.userinfo');
 
 Route::get('/', function () {
     return view('welcome');

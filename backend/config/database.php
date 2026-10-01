@@ -96,6 +96,9 @@ return [
             'prefix' => '',
             'prefix_indexes' => true,
             'search_path' => 'public',
+            // Laravel writes UTC dates without offsets; timestamptz must use
+            // the same time zone rather than the PostgreSQL server's default.
+            'timezone' => 'UTC',
             'sslmode' => env('DB_SSLMODE', 'prefer'),
         ],
 

@@ -18,6 +18,7 @@ class OidcIdToken
     public function __construct(
         private readonly ExchangedOidcNonce $exchange,
         private readonly OidcSigningKey $signingKey,
+        private readonly OidcUserClaims $userClaims,
     ) {}
 
     public function issue(AccessTokenEntityInterface $accessToken, CryptKeyInterface $privateKey): string
@@ -44,27 +45,9 @@ class OidcIdToken
             ->expiresAt($accessToken->getExpiryDateTime())
             ->withClaim('nonce', $nonce);
         $scopes = array_map(static fn ($scope): string => $scope->getIdentifier(), $accessToken->getScopes());
-        if (in_array('email', $scopes, true)) {
-            $builder = $builder->withClaim('email', $user->email)
-                ->withClaim('email_verified', $user->email_verified_at !== null);
-        }
-        if (in_array('profile', $scopes, true)) {
-            $claims = [
-                'name' => $user->name,
-                'given_name' => $user->profile?->first_name,
-                'family_name' => $user->profile?->last_name,
-                'picture' => $user->profile?->profile_photo,
-            ];
-            // OIDC picture is an image URL. Do not invent a public URL from a
-            // local path or expose storage paths when the photo is not a URL.
-            if (! is_string($claims['picture']) || ! filter_var($claims['picture'], FILTER_VALIDATE_URL)
-                || ! in_array(parse_url($claims['picture'], PHP_URL_SCHEME), ['http', 'https'], true)) {
-                unset($claims['picture']);
-            }
-            foreach ($claims as $claim => $value) {
-                if (is_string($value) && $value !== '') {
-                    $builder = $builder->withClaim($claim, $value);
-                }
+        foreach ($this->userClaims->forUser($user, $scopes) as $claim => $value) {
+            if ($claim !== 'sub') {
+                $builder = $builder->withClaim($claim, $value);
             }
         }
 
