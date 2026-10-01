@@ -32,6 +32,9 @@ class OidcIdTokenTest extends TestCase
             $this->assertSame(1, $this->verifySignature($jwt));
             $this->assertSame($this->get('/oauth/jwks')->json('keys.0.kid'), $header['kid']);
             $this->assertSame('https://iam.example.test', $claims['iss']);
+            $discovery = $this->get('/.well-known/openid-configuration')->assertOk()->json();
+            $this->assertSame($claims['iss'], $discovery['issuer']);
+            $this->assertSame([$header['alg']], $discovery['id_token_signing_alg_values_supported']);
             $this->assertSame($user->public_id, $claims['sub']);
             $this->assertNotSame((string) $user->id, $claims['sub']);
             $this->assertNotSame($user->email, $claims['sub']);

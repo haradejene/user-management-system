@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Oidc\DiscoveryController;
 use App\Http\Controllers\Oidc\JwksController;
 use App\Http\Controllers\Oidc\UserInfoController;
 use App\Http\Middleware\RequireOidcBearerToken;
@@ -8,6 +9,9 @@ use Illuminate\Support\Facades\Route;
 
 // Public key publication does not read or create an IAM browser session.
 Route::get('/oauth/jwks', JwksController::class)->withoutMiddleware('web')->name('oidc.jwks');
+
+Route::get('/.well-known/openid-configuration', DiscoveryController::class)
+    ->withoutMiddleware('web')->name('oidc.discovery');
 
 Route::match(['GET', 'POST'], '/oauth/userinfo', UserInfoController::class)
     ->withoutMiddleware('web')
