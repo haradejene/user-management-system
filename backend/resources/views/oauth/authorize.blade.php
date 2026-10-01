@@ -20,6 +20,7 @@
     </form>
     <form method="POST" action="{{ route('passport.authorizations.deny') }}">
         @csrf
+        @method('DELETE')
         <input type="hidden" name="auth_token" value="{{ $authToken }}">
         <button type="submit">Deny</button>
     </form>
