@@ -1,7 +1,11 @@
 <?php
 
+use App\Http\Controllers\Oidc\JwksController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
+
+// Public key publication does not read or create an IAM browser session.
+Route::get('/oauth/jwks', JwksController::class)->withoutMiddleware('web')->name('oidc.jwks');
 
 Route::get('/', function () {
     return view('welcome');

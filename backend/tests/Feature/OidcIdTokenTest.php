@@ -8,8 +8,8 @@ use App\Models\User;
 use App\Services\OAuthClientService;
 use Illuminate\Foundation\Http\Middleware\VerifyCsrfToken;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
-use Laravel\Passport\Passport;
 use Tests\TestCase;
 
 class OidcIdTokenTest extends TestCase
@@ -30,6 +30,7 @@ class OidcIdTokenTest extends TestCase
             [$header, $claims] = $this->decode($jwt);
             $this->assertSame('RS256', $header['alg']);
             $this->assertSame(1, $this->verifySignature($jwt));
+            $this->assertSame($this->get('/oauth/jwks')->json('keys.0.kid'), $header['kid']);
             $this->assertSame('https://iam.example.test', $claims['iss']);
             $this->assertSame($user->public_id, $claims['sub']);
             $this->assertNotSame((string) $user->id, $claims['sub']);
@@ -102,6 +103,9 @@ class OidcIdTokenTest extends TestCase
         [$user, , $client] = $this->fixture();
         $oauth = $this->postJson('/oauth/token', [...$this->authorize($user, $client, 'iam:read', null), 'nonce' => 'not-oidc'])->assertOk();
         $this->assertArrayNotHasKey('id_token', $oauth->json());
+        [$accessHeader] = $this->decode($oauth->json('access_token'));
+        $this->assertArrayNotHasKey('kid', $accessHeader);
+        $this->assertSame(['access_token', 'expires_in', 'refresh_token', 'token_type'], array_values(Arr::sort(array_keys($oauth->json()))));
         $oidc = $this->postJson('/oauth/token', $this->authorize($user, $client, 'openid', 'initial'))->assertOk();
         $refresh = $this->postJson('/oauth/token', ['grant_type' => 'refresh_token', 'client_id' => $client->id, 'refresh_token' => $oidc->json('refresh_token'), 'nonce' => 'not-a-new-authentication'])->assertOk();
         $this->assertArrayNotHasKey('id_token', $refresh->json());
@@ -142,6 +146,22 @@ class OidcIdTokenTest extends TestCase
             $this->assertSame($nonce, $claims['nonce']);
             $this->assertSame([$expectedClient->id], (array) $claims['aud']);
         }
+    }
+
+    public function test_configured_inline_signing_key_matches_jwks_and_client_algorithm_is_ignored(): void
+    {
+        $rsa = openssl_pkey_new(['private_key_type' => OPENSSL_KEYTYPE_RSA, 'private_key_bits' => 2048, 'config' => base_path('tests/Fixtures/openssl.cnf')]);
+        openssl_pkey_export($rsa, $pem, null, ['config' => base_path('tests/Fixtures/openssl.cnf')]);
+        config(['passport.private_key' => str_replace("\n", '\\n', $pem)]);
+        [$user, , $client] = $this->fixture();
+        $token = $this->authorize($user, $client, 'openid', 'bound-inline-key');
+        $response = $this->postJson('/oauth/token', [...$token, 'alg' => 'HS256', 'kid' => 'client-controlled'])->assertOk();
+        [$header, $claims] = $this->decode($response->json('id_token'));
+        $this->assertSame('RS256', $header['alg']);
+        $this->assertSame($this->get('/oauth/jwks')->assertOk()->json('keys.0.kid'), $header['kid']);
+        $this->assertSame(1, $this->verifySignature($response->json('id_token')));
+        $this->assertSame('bound-inline-key', $claims['nonce']);
+        $this->assertSame($user->public_id, $claims['sub']);
     }
 
     private function fixture(): array
@@ -188,7 +208,33 @@ class OidcIdTokenTest extends TestCase
     {
         [$header, $claims, $signature] = explode('.', $jwt);
 
-        return openssl_verify($header.'.'.$claims, $this->base64UrlDecode($signature), file_get_contents(Passport::keyPath('oauth-public.key')), OPENSSL_ALGO_SHA256);
+        $jwk = $this->get('/oauth/jwks')->assertOk()->json('keys.0');
+        // Reconstruct a public RSA PEM using only published n/e, never local keys.
+        $n = $this->derInteger($this->base64UrlDecode($jwk['n']));
+        $e = $this->derInteger($this->base64UrlDecode($jwk['e']));
+        $der = "\x30".$this->derLength(strlen($n.$e)).$n.$e;
+        $pem = "-----BEGIN RSA PUBLIC KEY-----\n".chunk_split(base64_encode($der), 64, "\n")."-----END RSA PUBLIC KEY-----\n";
+
+        return openssl_verify($header.'.'.$claims, $this->base64UrlDecode($signature), $pem, OPENSSL_ALGO_SHA256);
+    }
+
+    private function derInteger(string $bytes): string
+    {
+        if (ord($bytes[0]) & 0x80) {
+            $bytes = "\0".$bytes;
+        }
+
+        return "\x02".$this->derLength(strlen($bytes)).$bytes;
+    }
+
+    private function derLength(int $length): string
+    {
+        if ($length < 128) {
+            return chr($length);
+        }
+        $bytes = ltrim(pack('N', $length), "\0");
+
+        return chr(0x80 | strlen($bytes)).$bytes;
     }
 
     private function base64UrlDecode(string $value): string

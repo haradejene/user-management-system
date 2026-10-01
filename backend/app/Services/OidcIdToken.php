@@ -15,7 +15,10 @@ use League\OAuth2\Server\Exception\OAuthServerException;
 
 class OidcIdToken
 {
-    public function __construct(private readonly ExchangedOidcNonce $exchange) {}
+    public function __construct(
+        private readonly ExchangedOidcNonce $exchange,
+        private readonly OidcSigningKey $signingKey,
+    ) {}
 
     public function issue(AccessTokenEntityInterface $accessToken, CryptKeyInterface $privateKey): string
     {
@@ -33,6 +36,7 @@ class OidcIdToken
         // Identity, audience and granted scopes come from Passport's issued token
         // entity; the nonce comes exclusively from its completed code exchange.
         $builder = Builder::new(new JoseEncoder, ChainedFormatter::withUnixTimestampDates())
+            ->withHeader('kid', $this->signingKey->keyId($privateKey))
             ->issuedBy($issuer)
             ->relatedTo($user->public_id)
             ->permittedFor($accessToken->getClient()->getIdentifier())
