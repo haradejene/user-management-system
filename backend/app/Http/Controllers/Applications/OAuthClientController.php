@@ -3,16 +3,30 @@
 namespace App\Http\Controllers\Applications;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Applications\ListOAuthClientsRequest;
 use App\Http\Requests\Applications\StoreOAuthClientRequest;
 use App\Http\Resources\OAuthClientResource;
 use App\Models\Application;
 use App\Models\OAuthClient;
 use App\Services\OAuthClientService;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Symfony\Component\HttpFoundation\Response;
 
 class OAuthClientController extends Controller
 {
+    public function index(ListOAuthClientsRequest $request, Application $application, OAuthClientService $clients): AnonymousResourceCollection
+    {
+        return OAuthClientResource::collection($clients->paginate($application, (int) ($request->validated('per_page') ?? 15)));
+    }
+
+    public function show(Application $application, string $client, OAuthClientService $clients): OAuthClientResource
+    {
+        $this->authorize('view', $application);
+
+        return new OAuthClientResource($clients->find($application, $client));
+    }
+
     public function store(StoreOAuthClientRequest $request, Application $application, OAuthClientService $clients): JsonResponse
     {
         abort_if($application->trashed(), Response::HTTP_NOT_FOUND);

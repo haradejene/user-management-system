@@ -25,8 +25,8 @@ export const applicationsService = {
     const response = await apiClient.patch<ApiResponse<Application>>(`/api/admin/applications/${id}/${action}`);
     return response.data.data;
   },
-  async forUser(userId: string, page = 1, perPage = 15): Promise<PaginatedResponse<ApplicationAccess>> {
-    const response = await apiClient.get<PaginatedResponse<ApplicationAccess>>(`/api/admin/users/${userId}/applications`, { params: { page, per_page: perPage } });
+  async forUser(userId: string, page = 1, perPage = 15, applicationIds?: string[]): Promise<PaginatedResponse<ApplicationAccess>> {
+    const response = await apiClient.get<PaginatedResponse<ApplicationAccess>>(`/api/admin/users/${userId}/applications`, { params: { page, per_page: perPage, application_ids: applicationIds } });
     return response.data;
   },
   async users(applicationId: string, page = 1, perPage = 15): Promise<PaginatedResponse<ApplicationUser>> {

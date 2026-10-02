@@ -23,7 +23,7 @@ class ApplicationAccessController extends Controller
         ApplicationAccessService $access,
     ): AnonymousResourceCollection {
         return UserApplicationAccessResource::collection(
-            $access->applications($user, (int) ($request->validated('per_page') ?? 15))
+            $access->applications($user, (int) ($request->validated('per_page') ?? 15), $request->validated('application_ids'))
         );
     }
 

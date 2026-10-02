@@ -293,4 +293,39 @@ class ApplicationAccessManagementTest extends TestCase
             'application_id' => $application->id,
         ]);
     }
+
+    public function test_targeted_assignment_lookup_finds_assignments_outside_the_unfiltered_page(): void
+    {
+        $admin = User::factory()->systemAdmin()->create();
+        $user = User::factory()->create();
+        $applications = Application::factory()->count(20)->sequence(fn ($sequence) => ['name' => sprintf('Application %02d', $sequence->index)])->create();
+        foreach ($applications as $application) {
+            $user->applications()->attach($application, ['status' => 'active']);
+        }
+        $target = $applications->last();
+        $unassigned = Application::factory()->create();
+        $base = '/api/admin/users/'.$user->public_id.'/applications';
+        $this->actingAs($admin)->getJson($base.'?per_page=15')->assertOk()->assertJsonMissing(['id' => $target->public_id]);
+        $query = http_build_query(['application_ids' => [$target->public_id, $unassigned->public_id], 'per_page' => 2]);
+        $this->getJson($base.'?'.$query)->assertOk()->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.id', $target->public_id)->assertJsonPath('data.0.assignment_exists', true)
+            ->assertJsonPath('data.0.effective_access', true)->assertJsonPath('meta.total', 1)->assertJsonPath('meta.last_page', 1);
+        $user->update(['status' => 'suspended']);
+        $this->getJson($base.'?'.$query)->assertOk()->assertJsonPath('data.0.effective_access', false)->assertJsonPath('data.0.ineffective_reason', 'user_suspended');
+        $user->applications()->detach($target);
+        $this->getJson($base.'?'.$query)->assertOk()->assertJsonCount(0, 'data');
+    }
+
+    public function test_targeted_assignment_filters_are_bounded_validated_and_admin_only(): void
+    {
+        $admin = User::factory()->systemAdmin()->create();
+        $user = User::factory()->create();
+        $application = Application::factory()->create();
+        $base = '/api/admin/users/'.$user->public_id.'/applications';
+        foreach ([['hello'], [$application->public_id, $application->public_id], array_fill(0, 101, $application->public_id)] as $ids) {
+            $this->actingAs($admin)->getJson($base.'?'.http_build_query(['application_ids' => $ids]))->assertUnprocessable();
+        }
+        $this->getJson($base.'?application_ids=hello')->assertUnprocessable()->assertJsonValidationErrors('application_ids');
+        $this->actingAs($user)->getJson($base.'?'.http_build_query(['application_ids' => [$application->public_id]]))->assertForbidden();
+    }
 }

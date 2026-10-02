@@ -17,6 +17,10 @@ class ListApplicationAccessRequest extends FormRequest
     {
         return [
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
+            // Filter the existing user assignment list to visible applications;
+            // its absence preserves the original paginated endpoint behavior.
+            'application_ids' => ['sometimes', 'array', 'max:100'],
+            'application_ids.*' => ['required', 'uuid', 'distinct'],
         ];
     }
 }

@@ -13,9 +13,10 @@ use Illuminate\Validation\ValidationException;
 
 class ApplicationAccessService
 {
-    public function applications(User $user, int $perPage): LengthAwarePaginator
+    public function applications(User $user, int $perPage, ?array $applicationIds = null): LengthAwarePaginator
     {
         $paginator = $user->applications()
+            ->when($applicationIds !== null, fn ($query) => $query->whereIn('applications.public_id', $applicationIds))
             ->orderBy('name')
             ->orderBy('applications.id')
             ->paginate($perPage);

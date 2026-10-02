@@ -16,6 +16,9 @@ class OAuthClientResource extends JsonResource
             'redirect_uris' => $this->redirect_uris,
             'confidential' => $this->confidential(),
             'grant_types' => $this->grant_types,
+            'revoked' => (bool) $this->revoked,
+            'created_at' => $this->created_at?->toISOString(),
+            'updated_at' => $this->updated_at?->toISOString(),
         ];
 
         return $resource;

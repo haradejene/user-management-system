@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Enums\ApplicationStatus;
 use App\Models\Application;
 use App\Models\OAuthClient;
+use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Laravel\Passport\ClientRepository;
@@ -12,6 +13,23 @@ use Laravel\Passport\ClientRepository;
 class OAuthClientService
 {
     public function __construct(private readonly ClientRepository $passportClients) {}
+
+    public function paginate(Application $application, int $perPage): LengthAwarePaginator
+    {
+        return OAuthClient::query()->with('application')
+            ->where('application_id', $application->getKey())
+            ->orderByDesc('created_at')->orderBy('id')
+            ->paginate($perPage)->withQueryString();
+    }
+
+    public function find(Application $application, string $clientId): OAuthClient
+    {
+        // Invalid route identifiers must not reach PostgreSQL's UUID cast.
+        abort_unless(Str::isUuid($clientId), 404);
+
+        return OAuthClient::query()->with('application')
+            ->where('application_id', $application->getKey())->findOrFail($clientId);
+    }
 
     /** @param array{name: string, redirect_uris: list<string>, confidential?: bool} $attributes */
     public function create(Application $application, array $attributes): OAuthClient

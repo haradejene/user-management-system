@@ -47,6 +47,8 @@ Route::prefix('admin')
         Route::apiResource('applications', ApplicationController::class)->only(['index', 'store', 'show', 'update']);
         Route::patch('applications/{application:public_id}/deactivate', [ApplicationStatusController::class, 'deactivate']);
         Route::patch('applications/{application:public_id}/activate', [ApplicationStatusController::class, 'activate']);
+        Route::get('applications/{application:public_id}/oauth-clients', [OAuthClientController::class, 'index']);
+        Route::get('applications/{application:public_id}/oauth-clients/{client}', [OAuthClientController::class, 'show']);
         Route::post('applications/{application:public_id}/oauth-clients', [OAuthClientController::class, 'store']);
         Route::patch('applications/{application:public_id}/oauth-clients/{client}/revoke', [OAuthClientController::class, 'revoke']);
         Route::get('users/{user:public_id}/applications', [ApplicationAccessController::class, 'forUser']);
