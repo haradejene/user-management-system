@@ -2,7 +2,6 @@
 
 namespace App\Services;
 
-use App\Models\User;
 use Illuminate\Support\Facades\Date;
 use Lcobucci\JWT\Encoding\ChainedFormatter;
 use Lcobucci\JWT\Encoding\JoseEncoder;
@@ -19,6 +18,7 @@ class OidcIdToken
         private readonly ExchangedOidcNonce $exchange,
         private readonly OidcSigningKey $signingKey,
         private readonly OidcUserClaims $userClaims,
+        private readonly OAuthAccessEligibility $eligibility,
     ) {}
 
     public function issue(AccessTokenEntityInterface $accessToken, CryptKeyInterface $privateKey): string
@@ -28,7 +28,7 @@ class OidcIdToken
             throw OAuthServerException::serverError('The OpenID Connect exchange metadata is unavailable.');
         }
 
-        $user = User::query()->with('profile')->find($accessToken->getUserIdentifier());
+        $user = $this->eligibility->requireUser($accessToken->getUserIdentifier(), $accessToken->getClient()->getIdentifier())->load('profile');
         $issuer = config('oidc.issuer') ?? config('app.url');
         if (! $user || ! is_string($user->public_id) || $user->public_id === '' || ! is_string($issuer) || $issuer === '') {
             throw OAuthServerException::serverError('The OpenID Connect identity or issuer is unavailable.');

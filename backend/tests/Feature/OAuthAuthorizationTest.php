@@ -464,7 +464,8 @@ class OAuthAuthorizationTest extends TestCase
         app(OAuthClientService::class)->revoke($application, $client);
 
         $this->withOAuthToken($tokens['access_token'])->getJson('/oauth-test-resource')->assertUnauthorized();
-        $this->postJson('/oauth/token', ['grant_type' => 'refresh_token', 'client_id' => $client->id, 'refresh_token' => $tokens['refresh_token']])->assertStatus(400);
+        $this->postJson('/oauth/token', ['grant_type' => 'refresh_token', 'client_id' => $client->id, 'refresh_token' => $tokens['refresh_token']])
+            ->assertUnauthorized()->assertJsonPath('error', 'invalid_client');
         $this->assertDatabaseHas('oauth_access_tokens', ['client_id' => $client->id, 'revoked' => true]);
         $this->assertDatabaseHas('oauth_refresh_tokens', ['revoked' => true]);
     }

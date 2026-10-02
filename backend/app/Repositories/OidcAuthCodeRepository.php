@@ -2,13 +2,43 @@
 
 namespace App\Repositories;
 
+use App\Services\OAuthAccessEligibility;
 use Laravel\Passport\Bridge\AuthCodeRepository as PassportAuthCodeRepository;
 use Laravel\Passport\Passport;
 use League\OAuth2\Server\Entities\AuthCodeEntityInterface;
+use League\OAuth2\Server\Exception\OAuthServerException;
 
 class OidcAuthCodeRepository extends PassportAuthCodeRepository
 {
+    public function __construct(private readonly OAuthAccessEligibility $eligibility) {}
+
+    public function isAuthCodeRevoked(string $codeId): bool
+    {
+        $connection = Passport::authCode()->getConnection();
+        if ($connection->transactionLevel() === 0) {
+            throw new \LogicException('Authorization-code exchange requires a transaction.');
+        }
+
+        // League supplies this identity after decrypting the code. A competing
+        // exchange waits here and observes the first exchange's committed revoke.
+        $code = Passport::authCode()->newQuery()->whereKey($codeId)->lockForUpdate()->first();
+
+        return ! $code || $code->revoked;
+    }
+
     public function persistNewAuthCode(AuthCodeEntityInterface $authCodeEntity): void
+    {
+        Passport::authCode()->getConnection()->transaction(function () use ($authCodeEntity): void {
+            $user = $this->eligibility->requireUser($authCodeEntity->getUserIdentifier(), $authCodeEntity->getClient()->getIdentifier());
+            // Approval must still belong to the user who started this request.
+            if ((string) app('request')->user('web')?->getAuthIdentifier() !== (string) $user->getKey()) {
+                throw OAuthServerException::accessDenied('The authorization session has changed.');
+            }
+            $this->persistEligibleAuthCode($authCodeEntity);
+        });
+    }
+
+    private function persistEligibleAuthCode(AuthCodeEntityInterface $authCodeEntity): void
     {
         $scopes = array_map(static fn ($scope): string => $scope->getIdentifier(), $authCodeEntity->getScopes());
         if (! in_array('openid', $scopes, true)) {

@@ -5,11 +5,15 @@ namespace App\Providers;
 use App\Http\Responses\OidcBearerTokenResponse;
 use App\Models\OAuthAuthCode;
 use App\Models\OAuthClient;
+use App\Repositories\IamAccessTokenRepository;
+use App\Repositories\IamClientRepository;
 use App\Repositories\IamRefreshTokenRepository;
 use App\Repositories\OidcAuthCodeRepository;
 use DateInterval;
 use Illuminate\Support\ServiceProvider;
+use Laravel\Passport\Bridge\AccessTokenRepository as PassportAccessTokenRepository;
 use Laravel\Passport\Bridge\AuthCodeRepository as PassportAuthCodeRepository;
+use Laravel\Passport\Bridge\ClientRepository as PassportClientRepository;
 use Laravel\Passport\Bridge\RefreshTokenRepository as PassportRefreshTokenRepository;
 use Laravel\Passport\Passport;
 
@@ -21,6 +25,8 @@ class OAuthServiceProvider extends ServiceProvider
         Passport::useClientModel(OAuthClient::class);
         Passport::useAuthCodeModel(OAuthAuthCode::class);
         Passport::$deviceCodeGrantEnabled = false;
+        $this->app->bind(PassportClientRepository::class, IamClientRepository::class);
+        $this->app->bind(PassportAccessTokenRepository::class, IamAccessTokenRepository::class);
         $this->app->bind(PassportRefreshTokenRepository::class, IamRefreshTokenRepository::class);
         $this->app->bind(PassportAuthCodeRepository::class, OidcAuthCodeRepository::class);
     }
