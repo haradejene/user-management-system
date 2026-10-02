@@ -1,12 +1,12 @@
 import { apiClient } from "@/services/api-client";
 import type { ApiResponse, PaginatedResponse } from "@/types/api";
-import type { Application, ApplicationAccess, ApplicationUser } from "@/types/application";
+import type { Application, ApplicationAccess, ApplicationStatus, ApplicationUser } from "@/types/application";
 
 export interface ApplicationInput { name: string; slug: string; description?: string | null }
 
 export const applicationsService = {
-  async list(search = "", page = 1, perPage = 100): Promise<PaginatedResponse<Application>> {
-    const response = await apiClient.get<PaginatedResponse<Application>>("/api/admin/applications", { params: { search: search || undefined, page, per_page: perPage } });
+  async list(search = "", page = 1, perPage = 100, status?: ApplicationStatus): Promise<PaginatedResponse<Application>> {
+    const response = await apiClient.get<PaginatedResponse<Application>>("/api/admin/applications", { params: { search: search || undefined, page, per_page: perPage, status } });
     return response.data;
   },
   async get(id: string): Promise<Application> {
