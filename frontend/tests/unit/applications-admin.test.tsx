@@ -114,7 +114,7 @@ it("renders detail loading and overview with only actual application fields", as
   const navigation = screen.getByRole("navigation", { name: "Application sections" });
   expect(within(navigation).getByRole("link", { name: "Overview" })).toHaveAttribute("aria-current", "page");
   expect(within(navigation).getByRole("link", { name: "Settings" })).toHaveAttribute("href", `/applications/${application.id}/edit`);
-  expect(within(navigation).getByText("OAuth Clients")).toHaveAttribute("aria-disabled", "true");
+  expect(within(navigation).getByRole("link", { name: "OAuth Clients" })).toHaveAttribute("href", `/applications/${application.id}/oauth-clients`);
   expect(within(navigation).getByText("User Access")).toHaveAttribute("aria-disabled", "true");
 });
 

@@ -1,10 +1,26 @@
 import { apiClient } from "@/services/api-client";
 import type { ApiResponse, PaginatedResponse } from "@/types/api";
 import type { Application, ApplicationAccess, ApplicationStatus, ApplicationUser } from "@/types/application";
+import type { OAuthClient, OAuthClientCreation, OAuthClientInput } from "@/types/oauth-client";
 
 export interface ApplicationInput { name: string; slug: string; description?: string | null }
 
 export const applicationsService = {
+  async oauthClients(application: string, page = 1, perPage = 25): Promise<PaginatedResponse<OAuthClient>> {
+    const response = await apiClient.get<PaginatedResponse<OAuthClient>>(`/api/admin/applications/${application}/oauth-clients`, { params: { page: Math.max(1, Math.floor(page)), per_page: Math.min(100, Math.max(1, Math.floor(perPage))) } });
+    return response.data;
+  },
+  async oauthClient(application: string, client: string): Promise<OAuthClient> {
+    const response = await apiClient.get<ApiResponse<OAuthClient>>(`/api/admin/applications/${application}/oauth-clients/${client}`);
+    return response.data.data;
+  },
+  async createOAuthClient(application: string, input: OAuthClientInput): Promise<OAuthClientCreation> {
+    const response = await apiClient.post<OAuthClientCreation>(`/api/admin/applications/${application}/oauth-clients`, { name: input.name, redirect_uris: input.redirect_uris, confidential: input.confidential });
+    return response.data;
+  },
+  async revokeOAuthClient(application: string, client: string): Promise<void> {
+    await apiClient.patch(`/api/admin/applications/${application}/oauth-clients/${client}/revoke`);
+  },
   async list(search = "", page = 1, perPage = 100, status?: ApplicationStatus): Promise<PaginatedResponse<Application>> {
     const response = await apiClient.get<PaginatedResponse<Application>>("/api/admin/applications", { params: { search: search || undefined, page, per_page: perPage, status } });
     return response.data;
