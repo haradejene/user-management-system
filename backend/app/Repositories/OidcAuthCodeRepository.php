@@ -2,6 +2,7 @@
 
 namespace App\Repositories;
 
+use App\Http\Middleware\EnsureAccountIsActive;
 use App\Services\OAuthAccessEligibility;
 use Laravel\Passport\Bridge\AuthCodeRepository as PassportAuthCodeRepository;
 use Laravel\Passport\Passport;
@@ -31,7 +32,10 @@ class OidcAuthCodeRepository extends PassportAuthCodeRepository
         Passport::authCode()->getConnection()->transaction(function () use ($authCodeEntity): void {
             $user = $this->eligibility->requireUser($authCodeEntity->getUserIdentifier(), $authCodeEntity->getClient()->getIdentifier());
             // Approval must still belong to the user who started this request.
-            if ((string) app('request')->user('web')?->getAuthIdentifier() !== (string) $user->getKey()) {
+            // Recheck the same session contract against the locked user: disabling
+            // and reactivation between middleware and issuance cannot revive it.
+            if ((string) app('request')->user('web')?->getAuthIdentifier() !== (string) $user->getKey()
+                || ! app(EnsureAccountIsActive::class)->hasCurrentSession(app('request'), $user)) {
                 throw OAuthServerException::accessDenied('The authorization session has changed.');
             }
             $this->persistEligibleAuthCode($authCodeEntity);

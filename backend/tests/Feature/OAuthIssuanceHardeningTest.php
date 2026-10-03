@@ -40,7 +40,15 @@ class OAuthIssuanceHardeningTest extends TestCase
         $pending = $this->pending($user, $client, $scope);
         $this->change($change, $user, $application, $client);
 
-        $this->post('/oauth/authorize', ['auth_token' => $pending])->assertUnauthorized()->assertJsonPath('error', 'access_denied');
+        $response = $this->post('/oauth/authorize', ['auth_token' => $pending]);
+        $invalidAccount = in_array($change, ['inactive_user', 'suspended_user', 'deleted_user'], true);
+        if ($invalidAccount) {
+            // The shared browser-session middleware now rejects before issuance.
+            $response->assertForbidden()->assertJsonPath('message', 'Your account is not active.');
+            $this->assertGuest('web');
+        } else {
+            $response->assertUnauthorized()->assertJsonPath('error', 'access_denied');
+        }
         $this->assertDatabaseCount('oauth_auth_codes', 0);
         $this->assertDatabaseCount('oauth_access_tokens', 0);
         $this->assertSame([], $this->app['session.store']->get(OidcAuthorizationTransaction::SESSION_KEY, []));

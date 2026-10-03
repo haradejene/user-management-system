@@ -12,12 +12,20 @@ use Symfony\Component\HttpFoundation\Response;
 
 class EnsureAccountIsActive
 {
-    public function handle(Request $request, Closure $next): Response
+    public function handle(Request $request, Closure $next, ?string $context = null): Response
     {
-        $user = $request->user();
+        if ($context === 'oauth' && ! $request->is('oauth/authorize', 'oauth/continue')) {
+            return $next($request);
+        }
+
+        $user = $request->user($context === 'oauth' ? 'web' : null);
+        // Guests must still reach Passport's central-login continuation.
+        if ($context === 'oauth' && ! $user) {
+            return $next($request);
+        }
         $current = $user && ! $user->trashed() ? User::query()->find($user->getKey()) : null;
         $active = $current?->status === AccountStatus::Active;
-        $validSession = $request->hasSession() && $request->session()->get('auth_session_version') === $current?->session_version;
+        $validSession = $current && $this->hasCurrentSession($request, $current);
 
         if (! $active || ! $validSession) {
             Auth::guard('web')->logoutCurrentDevice();
@@ -33,5 +41,10 @@ class EnsureAccountIsActive
         }
 
         return $next($request);
+    }
+
+    public function hasCurrentSession(Request $request, User $user): bool
+    {
+        return $request->hasSession() && $request->session()->get('auth_session_version') === $user->session_version;
     }
 }

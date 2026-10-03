@@ -17,7 +17,7 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->statefulApi();
-        $middleware->appendToGroup('web', OidcAuthorizationTransaction::class);
+        $middleware->appendToGroup('web', [EnsureAccountIsActive::class.':oauth', OidcAuthorizationTransaction::class]);
         $middleware->alias([
             'active' => EnsureAccountIsActive::class,
             'central-iam-admin' => EnsureCentralIamAdministrator::class,
