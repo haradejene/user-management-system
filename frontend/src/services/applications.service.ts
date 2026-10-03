@@ -46,7 +46,7 @@ export const applicationsService = {
     return response.data;
   },
   async users(applicationId: string, page = 1, perPage = 15): Promise<PaginatedResponse<ApplicationUser>> {
-    const response = await apiClient.get<PaginatedResponse<ApplicationUser>>(`/api/admin/applications/${applicationId}/users`, { params: { page, per_page: perPage } });
+    const response = await apiClient.get<PaginatedResponse<ApplicationUser>>(`/api/admin/applications/${applicationId}/users`, { params: { page: Math.max(1, Math.floor(page)), per_page: Math.min(100, Math.max(1, Math.floor(perPage))) } });
     return response.data;
   },
   async grant(userId: string, applicationId: string): Promise<ApplicationAccess> {

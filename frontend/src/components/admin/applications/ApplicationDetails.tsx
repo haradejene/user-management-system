@@ -10,6 +10,7 @@ import { getApiErrorMessage } from "@/services/api-client";
 import type { Application } from "@/types/application";
 import { ApplicationOverview } from "./ApplicationOverview";
 import { ApplicationOAuthClients } from "./ApplicationOAuthClients";
+import { ApplicationUserAccess } from "./ApplicationUserAccess";
 import { ApplicationSettings } from "./ApplicationSettings";
 import { ApplicationTabs, type ApplicationTab } from "./ApplicationTabs";
 
@@ -35,7 +36,7 @@ function ApplicationDetailState({ id, tab }: { id: string; tab: ApplicationTab }
     {loading ? <LoadingState label="Loading application…" /> : error ? <div className="space-y-4"><Alert>{error}</Alert><Button variant="secondary" onClick={() => { setError(null); setLoading(true); setRetry((value) => value + 1); }}>Retry</Button></div> : application ? <>
       <div className="mb-6"><StatusBadge status={application.status} /></div>
       <ApplicationTabs id={application.id} selected={tab} />
-      {tab === "settings" ? <ApplicationSettings application={application} onChanged={setApplication} /> : tab === "oauth-clients" ? <ApplicationOAuthClients applicationId={id} /> : <ApplicationOverview application={application} />}
+      {tab === "settings" ? <ApplicationSettings application={application} onChanged={setApplication} /> : tab === "oauth-clients" ? <ApplicationOAuthClients applicationId={id} /> : tab === "user-access" ? <ApplicationUserAccess applicationId={id} applicationName={application.name} /> : <ApplicationOverview application={application} />}
     </> : null}
   </AdminPage>;
 }

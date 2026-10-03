@@ -115,7 +115,7 @@ it("renders detail loading and overview with only actual application fields", as
   expect(within(navigation).getByRole("link", { name: "Overview" })).toHaveAttribute("aria-current", "page");
   expect(within(navigation).getByRole("link", { name: "Settings" })).toHaveAttribute("href", `/applications/${application.id}/edit`);
   expect(within(navigation).getByRole("link", { name: "OAuth Clients" })).toHaveAttribute("href", `/applications/${application.id}/oauth-clients`);
-  expect(within(navigation).getByText("User Access")).toHaveAttribute("aria-disabled", "true");
+  expect(within(navigation).getByRole("link", { name: "User Access" })).toHaveAttribute("href", `/applications/${application.id}/user-access`);
 });
 
 it("shows detail errors and retries without rendering an editable form", async () => {
