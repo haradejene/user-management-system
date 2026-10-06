@@ -1,6 +1,6 @@
 # Doxa Laravel SDK v1 — Milestone 1
 
-A reusable OIDC relying-party package for Laravel 12 and PHP 8.2+. Doxa IAM owns central authentication and application access. This package implements Doxa Universal SDK Contract v1.0 and returns a validated, immutable `DoxaIdentity`.
+A reusable OIDC relying-party package for Laravel 10, 11 and 12 on PHP 8.2+. Doxa IAM owns central authentication and application access. This package implements Doxa Universal SDK Contract v1.0 and returns a validated, immutable `DoxaIdentity`. The same SDK v1 package and public API work across these Laravel versions; integration does not require upgrading the host's Laravel version. Laravel 9 and PHP below 8.2 are unsupported.
 
 ```text
 Continue with Doxa
@@ -27,7 +27,7 @@ This package is currently developed at `packages/doxa-laravel`; it is not yet pu
 
 Run `composer update doxa/laravel-sdk --with-dependencies` in that host. No Passport or Sanctum installation is required by the SDK. Runtime dependencies are declared in the package manifest; the parent IAM Composer installation is not used.
 
-Laravel discovers `Doxa\Laravel\DoxaServiceProvider` automatically. If package discovery is disabled, add it to the host's `bootstrap/providers.php`. Publish configuration with:
+Laravel discovers `Doxa\Laravel\DoxaServiceProvider` automatically. If package discovery is disabled, add it to the `providers` array in `config/app.php` on Laravel 10, or to `bootstrap/providers.php` on Laravel 11/12. Existing applications with a customized bootstrap should use their provider registration mechanism. Publish configuration with:
 
 ```shell
 php artisan vendor:publish --tag=doxa-config
@@ -138,3 +138,31 @@ composer validate --strict
 ```
 
 Tests include package-level protocol integration, a Laravel Testbench route round trip and independent-process callback races using shared file and SQLite database caches. They do not contact production IAM, modify its application, or depend on `backend/vendor`. See `verification.md` for recorded results and remaining deployment checks.
+
+### Framework compatibility matrix
+
+The checked-in `composer.lock` is only the Laravel 12 development baseline. It does not prove Laravel 10/11 compatibility. `tools/compatibility.php` derives a separate root manifest and lock under ignored `.compatibility/` for each target. Composer selects the compatible Testbench patch, including one that retains Laravel 10.50.2. Each test profile runs Composer validation, the complete PHPUnit suite, PHPStan level 5 and Pint.
+
+| Profile | Laravel | Testbench | PHPUnit | Purpose |
+| --- | --- | --- | --- | --- |
+| `laravel10` | 10.50.2 | 8.x | 10.5.x | Exact first integration target; Guzzle 7.13.1, HttpFoundation 6.4 |
+| `laravel11` | 11.x | 9.x | 11.5.x | Independently resolved Laravel 11 |
+| `laravel12` | 12.69.3 | 10.x | 11.5.x | Independently resolved Laravel 12 |
+| `floors` | 10.50.2 | 8.x | 10.5.x | Guzzle 7.8.2 and Firebase JWT 7.1.0 with HttpFoundation 6.4 |
+| `hrm` | 10.50.2 | None | None | Solver-only synthetic consumer with Sanctum 3.3.3 and Guzzle 7.13.1 |
+
+Run from the package directory with PHP 8.2 and Composer 2.10+:
+
+```shell
+php tools/compatibility.php laravel10 --run --historical-advisories
+php tools/compatibility.php laravel11 --run --historical-advisories
+php tools/compatibility.php laravel12 --run
+php tools/compatibility.php floors --run --historical-advisories
+php tools/compatibility.php hrm --run --historical-advisories
+```
+
+Current Composer advisories block the historical Laravel 10/11 targets and older Guzzle versions. `--historical-advisories` explicitly opts into a command-only advisory-blocking exception for isolated compatibility tests. It does not suppress audit reporting, change the package's default Composer policy, or establish that those host dependencies are free of vulnerabilities. Do not use it as an application deployment recommendation. See `verification.md` for the recorded advisory results.
+
+Profiles share this checkout's `vendor/` because existing subprocess security fixtures bootstrap that directory. Run them sequentially, or use a separate checkout per parallel CI job. Every profile resolves independently of the checked-in Laravel 12 lock. CI can invoke these same commands; no repository-root CI configuration is installed by this package. All recorded runs use real PHP 8.2.12; the fixture's Composer platform is also pinned to 8.2.12. Other PHP runtimes need their own test runs before being reported as verified.
+
+Without `--run`, the tool only generates the selected manifest for manual Composer commands using `COMPOSER=.compatibility/composer-<profile>.json`. Generated manifests, locks and JUnit reports remain local. To return to the checked-in Laravel 12 environment, clear any manually set `COMPOSER` variable and run `composer install`, followed by the normal package checks above. Neither matrix generation nor execution modifies the HRM repository. The `hrm` profile is not the complete HRM manifest or lockfile.

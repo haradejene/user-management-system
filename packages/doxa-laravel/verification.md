@@ -1,5 +1,39 @@
 # Milestone 1 verification
 
+## Laravel 10-12 compatibility implementation
+
+Verified on PHP 8.2.12 with Composer 2.10.1. Only package dependency constraints, lock metadata, development tooling and documentation changed. No production source, public API, configuration, PHPUnit configuration, security assertions or test fixtures changed. No Laravel-version-specific production source changes were required. The universal OIDC contract and transaction/exception hardening remain unchanged. No HRM repository changes, commits or pushes were made.
+
+Runtime Illuminate constraints now permit 10/11/12; HttpFoundation permits 6.4/7; Guzzle permits 7.8.2+. PHP remains ^8.2 and Firebase JWT remains ^7.1. Development Testbench permits 8/9/10, PHPUnit permits 10.5/11.5, Process permits 6.4/7, and database/filesystem permit Illuminate 10/11/12. No framework meta-package was added at runtime.
+
+Each generated matrix profile used an independent Composer resolution. The checked-in lock remains the Laravel 12 development baseline: only its content hash changed, with no package-version changes. Generated manifests/locks and JUnit reports reside in ignored `.compatibility/`; the package-local generator reproduces their constraints. Composer selected Testbench 8.38.0 instead of the newer release requiring Laravel 10.50.3.
+
+| Environment | Laravel | Testbench | PHPUnit | HttpFoundation | Guzzle | Firebase JWT | Full suite |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Laravel 10 / HRM target | 10.50.2 | 8.38.0 | 10.5.66 | 6.4.47 | 7.13.1 | 7.2.1 | 194 tests / 1,710 assertions |
+| Laravel 11 | 11.57.0 | 9.18.0 | 11.5.57 | 7.4.20 | 7.15.5 | 7.2.1 | 194 tests / 1,710 assertions |
+| Laravel 12 independent resolution | 12.69.3 | 10.12.0 | 11.5.57 | 7.4.20 | 7.15.5 | 7.2.1 | 194 tests / 1,710 assertions |
+| Declared transport/JWT floors | 10.50.2 | 8.38.0 | 10.5.66 | 6.4.47 | 7.8.2 | 7.1.0 | 194 tests / 1,710 assertions |
+| Restored checked-in Laravel 12 baseline | 12.69.3 | 10.12.0 | 11.5.56 | 7.4.20 | 7.15.5 | 7.2.1 | 194 tests / 1,710 assertions |
+
+All four full suites passed with zero errors, failures or skipped tests. PHPStan level 5 passed in all four environments. Pint passed for Laravel 11/12 and the floor environment. Matrix manifest validation passed, using `--no-check-all` only because exact historical pins in test fixtures are intentional; the package manifest is validated with the normal strict command. No tests were added, removed or weakened; counts remain unchanged. Full suites retain file/SQLite independent-process races, crashed-claimant protection, provenance and clone rejection, strict callback parsing/scrubbing, signature/claim validation, optional matching-sub UserInfo, provider/session/middleware integration and argument-enabled safe-error trace tests.
+
+The original Laravel 12 vendor environment was restored from the checked-in lock afterward. Final `composer validate --strict --no-check-publish`, PHPStan level 5, full PHPUnit (194 tests / 1,710 assertions, zero failures/errors/skips), Pint and `git diff --check` all passed. Package versions in this final lock were compared with the pre-change Git baseline and were identical.
+
+### Synthetic HRM solver evidence and advisories
+
+A separate no-install consumer fixture required `doxa/laravel-sdk` through a path repository, Laravel 10.50.2, PHP 8.2.12, Sanctum 3.3.3, Guzzle 7.13.1 and HttpFoundation ^6.4. Composer successfully retained those exact Laravel/Sanctum/Guzzle versions and resolved HttpFoundation 6.4.47 and Firebase JWT 7.2.1. No Illuminate 12 components or framework upgrade were required. This is the supplied HRM dependency subset, not its real complete manifest/lockfile, which was not available for verification.
+
+Default Composer advisory blocking rejected the historical Laravel 10/11 targets and older Guzzle versions. Compatibility resolutions used an explicit command-only `--no-security-blocking` exception. Audit reporting remained enabled; no advisory-ignore or blocking-policy change was written to the package manifest. The synthetic HRM fixture reported 10 advisories affecting Laravel and Guzzle; Laravel 11 reported four Laravel advisories; the floor profile reported 13 advisories affecting Laravel and Guzzle. The independently resolved Laravel 12 environment reported no advisories.
+
+For the exact HRM fixture, Laravel advisory IDs were PKSA-d5tc-s1qs-h781, PKSA-m5cs-t1y6-qpcs, PKSA-3r5d-mb8f-1qw9 and PKSA-mdq4-51ck-6kdq. Guzzle IDs were PKSA-gcrk-3vtt-1r14, PKSA-cnw1-2ytm-cgr8, PKSA-fy2t-3c5f-827y, PKSA-qxvb-2bpp-dnk6, PKSA-bbs6-q5q9-f3t4 and PKSA-pwsk-hy21-4gby. These cover framework debug/signed-URL/email validation and HTTP host/cookie/redirect/proxy handling. Passing SDK contract tests does not establish that these historical host dependencies are vulnerability-free. A Composer installation retaining them can require a separately reviewed advisory-policy decision; this task does not make that decision for HRM or change its dependencies.
+
+### Remaining deployment verification
+
+The real HRM lockfile and application integration, live IAM, Redis/PostgreSQL concurrency, PHP runtimes other than 8.2.12, and every historical framework minor were not tested. Symfony 6.4 coverage uses a patched 6.4 release, not the historical 6.4.0 patch. The lower-bound job tests the requested Guzzle/JWT floors without forcing every transitive dependency to its historical minimum. The package-local matrix command is CI-ready; no repository-root CI workflow was changed under the package-only authorization. Profiles share vendor and must run sequentially in one checkout, or in independent CI checkouts. Temporary archive-write denials during downloads were recovered by direct Composer install retries.
+
+The original Laravel 12 milestone record below is retained as historical evidence; the compatibility runs above extend it.
+
 Verified 2026-10-05 against the unchanged Doxa Universal SDK Contract v1.0 in `../../docs/doxa-sdk-contract.md`.
 
 ## Implementation
