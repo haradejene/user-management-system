@@ -1,8 +1,10 @@
 <?php
 
+use App\Http\Controllers\Oidc\ApplicationAccessController;
 use App\Http\Controllers\Oidc\DiscoveryController;
 use App\Http\Controllers\Oidc\JwksController;
 use App\Http\Controllers\Oidc\UserInfoController;
+use App\Http\Middleware\RequireApplicationAccessContext;
 use App\Http\Middleware\RequireOidcBearerToken;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
@@ -17,6 +19,11 @@ Route::match(['GET', 'POST'], '/oauth/userinfo', UserInfoController::class)
     ->withoutMiddleware('web')
     ->middleware([RequireOidcBearerToken::class, 'oauth.iam-access'])
     ->name('oidc.userinfo');
+
+Route::get('/oauth/application-access', ApplicationAccessController::class)
+    ->withoutMiddleware('web')
+    ->middleware([RequireOidcBearerToken::class, RequireApplicationAccessContext::class, 'oauth.iam-access'])
+    ->name('oauth.application-access');
 
 Route::get('/', function () {
     return view('welcome');
