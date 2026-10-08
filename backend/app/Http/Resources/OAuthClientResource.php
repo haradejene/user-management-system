@@ -4,6 +4,7 @@ namespace App\Http\Resources;
 
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
+use Laravel\Passport\Passport;
 
 class OAuthClientResource extends JsonResource
 {
@@ -17,6 +18,11 @@ class OAuthClientResource extends JsonResource
             'confidential' => $this->confidential(),
             'grant_types' => $this->grant_types,
             'revoked' => (bool) $this->revoked,
+            'pkce_required' => $this->hasGrantType('authorization_code'),
+            'pkce_method' => $this->hasGrantType('authorization_code') ? 'S256' : null,
+            'allowed_scopes' => Passport::scopeIds(),
+            'issuer' => config('oidc.issuer') ?? config('app.url'),
+            'discovery_url' => rtrim(config('oidc.issuer') ?? config('app.url'), '/').'/.well-known/openid-configuration',
             'created_at' => $this->created_at?->toISOString(),
             'updated_at' => $this->updated_at?->toISOString(),
         ];

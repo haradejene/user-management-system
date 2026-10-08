@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Applications\ApplicationAccessController;
+use App\Http\Controllers\Applications\ApplicationAuditController;
 use App\Http\Controllers\Applications\ApplicationController;
 use App\Http\Controllers\Applications\ApplicationStatusController;
 use App\Http\Controllers\Applications\OAuthClientController;
@@ -50,9 +51,11 @@ Route::prefix('admin')
         Route::get('applications/{application:public_id}/oauth-clients', [OAuthClientController::class, 'index']);
         Route::get('applications/{application:public_id}/oauth-clients/{client}', [OAuthClientController::class, 'show']);
         Route::post('applications/{application:public_id}/oauth-clients', [OAuthClientController::class, 'store']);
+        Route::patch('applications/{application:public_id}/oauth-clients/{client}/redirect-uris', [OAuthClientController::class, 'updateRedirects']);
         Route::patch('applications/{application:public_id}/oauth-clients/{client}/revoke', [OAuthClientController::class, 'revoke']);
         Route::get('users/{user:public_id}/applications', [ApplicationAccessController::class, 'forUser']);
         Route::post('users/{user:public_id}/applications', [ApplicationAccessController::class, 'store']);
         Route::delete('users/{user:public_id}/applications/{application:public_id}', [ApplicationAccessController::class, 'destroy']);
         Route::get('applications/{application:public_id}/users', [ApplicationAccessController::class, 'forApplication']);
+        Route::get('applications/{application:public_id}/history', ApplicationAuditController::class);
     });

@@ -5,9 +5,9 @@ namespace App\Http\Controllers\Applications;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Applications\ListOAuthClientsRequest;
 use App\Http\Requests\Applications\StoreOAuthClientRequest;
+use App\Http\Requests\Applications\UpdateOAuthRedirectsRequest;
 use App\Http\Resources\OAuthClientResource;
 use App\Models\Application;
-use App\Models\OAuthClient;
 use App\Services\OAuthClientService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
@@ -37,14 +37,20 @@ class OAuthClientController extends Controller
         return response()->json([
             'data' => $resource,
             ...($client->plainSecret !== null ? ['client_secret' => $client->plainSecret] : []),
-        ], Response::HTTP_CREATED);
+        ], Response::HTTP_CREATED, ['Cache-Control' => 'no-store']);
     }
 
-    public function revoke(Application $application, OAuthClient $client, OAuthClientService $clients): Response
+    public function revoke(Application $application, string $client, OAuthClientService $clients): Response
     {
+        $this->authorize('update', $application);
         abort_if($application->trashed(), Response::HTTP_NOT_FOUND);
-        $clients->revoke($application, $client);
+        $clients->revoke($application, $clients->find($application, $client));
 
         return response()->noContent();
+    }
+
+    public function updateRedirects(UpdateOAuthRedirectsRequest $request, Application $application, string $client, OAuthClientService $clients): OAuthClientResource
+    {
+        return new OAuthClientResource($clients->updateRedirects($application, $clients->find($application, $client), $request->validated()));
     }
 }

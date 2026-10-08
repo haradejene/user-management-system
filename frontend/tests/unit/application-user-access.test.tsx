@@ -22,7 +22,7 @@ beforeEach(() => {
   vi.resetAllMocks(); auth.user = { is_system_admin: true }; auth.isLoading = false;
   http.get.mockImplementation((path: string) => {
     if (path === "/api/admin/users") return Promise.resolve(response(page([user, second])));
-    if (path.startsWith("/api/admin/users/")) return Promise.resolve(response({ data: path.endsWith(second.id) ? second : user }));
+    if (path.startsWith("/api/admin/users/")) return Promise.resolve(response({ data: path.endsWith(second.id) ? { ...second, status: "active" } : user }));
     if (path.endsWith("/users")) return Promise.resolve(response(page()));
     return Promise.resolve(response({ data: app }));
   });
@@ -41,6 +41,16 @@ async function select(id = second.id) {
   await screen.findByText(`Selected user: ${id === second.id ? second.name : user.name}`);
 }
 const grant = () => fireEvent.click(screen.getByRole("button", { name: "Grant assignment" }));
+it("prevents granting access to a suspended identity", async () => {
+  http.get.mockImplementation((path: string) => {
+    if (path === "/api/admin/users") return Promise.resolve(response(page([second])));
+    if (path.startsWith("/api/admin/users/")) return Promise.resolve(response({ data: second }));
+    return Promise.resolve(response(page()));
+  });
+  renderAccess(); await screen.findByText(user.email); await select();
+  expect(screen.getByRole("button", { name: "Grant assignment" })).toBeDisabled();
+  grant(); expect(http.post).not.toHaveBeenCalled();
+});
 const confirmRevoke = () => fireEvent.click(screen.getByRole("button", { name: "Revoke assignment" }));
 function validation(messages = ["The user already has access to this application."]) {
   const error = new AxiosError("validation");
@@ -73,7 +83,7 @@ it("shows failures independently and retries the current application and page", 
   http.get.mockRejectedValueOnce(new Error("failed")).mockResolvedValue(response(page())); renderAccess(); await screen.findByRole("alert");
   expect(screen.queryByText("No users currently have an assignment for this application.")).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Retry" })); await screen.findByText(user.email);
-  expect(http.get).toHaveBeenLastCalledWith("/api/admin/applications/app/users", { params: { page: 1, per_page: 25 } });
+  await waitFor(() => expect(http.get).toHaveBeenLastCalledWith("/api/admin/applications/app/users", { params: { page: 1, per_page: 25 } }));
 });
 it("paginates in the current application and displays loading", async () => {
   http.get.mockImplementation((_path, options) => Promise.resolve(response(page([user], options.params.page, 2)))); renderAccess(); await screen.findByText(user.email);
@@ -94,7 +104,7 @@ it("opens the picker, keeps the application fixed and grants only after an autho
   http.get.mockImplementation((path: string) => Promise.resolve(response(path.endsWith("/users") ? page([second]) : { data: second })));
   grant(); await screen.findByText(`Assignment granted for Sara (${second.email}) to CRM.`);
   expect(http.post).toHaveBeenCalledWith("/api/admin/users/user-2/applications", { application_id: "app" });
-  expect(http.get).toHaveBeenLastCalledWith("/api/admin/applications/app/users", { params: { page: 1, per_page: 25 } });
+  await waitFor(() => expect(http.get).toHaveBeenLastCalledWith("/api/admin/applications/app/users", { params: { page: 1, per_page: 25 } }));
   expect(await screen.findByText("user_suspended")).toBeInTheDocument(); expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
 it("does not assume a selected user absent from the current list page is unassigned", async () => {
@@ -188,7 +198,7 @@ it("keeps the current page after revoke and falls back when the page no longer e
   http.delete.mockImplementation(() => { deleted = true; return Promise.resolve({ status: 204 }); });
   renderAccess(); await screen.findByText(user.email); fireEvent.click(screen.getByRole("button", { name: "Next" })); await screen.findByText("Page 2 of 2");
   fireEvent.click(screen.getByRole("button", { name: "Revoke access" })); confirmRevoke(); await screen.findByText("No users currently have an assignment for this application.");
-  expect(http.get).toHaveBeenLastCalledWith("/api/admin/applications/app/users", { params: { page: 1, per_page: 25 } });
+  await waitFor(() => expect(http.get).toHaveBeenLastCalledWith("/api/admin/applications/app/users", { params: { page: 1, per_page: 25 } }));
 });
 it("a revoke completed after page navigation refreshes the latest selected page", async () => {
   let resolve!: (value: unknown) => void;

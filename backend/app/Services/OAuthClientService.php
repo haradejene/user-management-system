@@ -6,6 +6,7 @@ use App\Enums\ApplicationStatus;
 use App\Models\Application;
 use App\Models\OAuthClient;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Laravel\Passport\ClientRepository;
@@ -50,6 +51,7 @@ class OAuthClientService
             ]);
             $client->secret = $confidential ? Str::random(40) : null;
             $client->save();
+            app(AuditService::class)->record('oauth_client.created', $application, ['client_id' => $client->getKey()]);
 
             return $client;
         });
@@ -61,6 +63,29 @@ class OAuthClientService
             $locked = OAuthClient::query()->lockForUpdate()->findOrFail($client->getKey());
             abort_unless((int) $locked->application_id === (int) $application->getKey(), 404);
             $this->passportClients->delete($locked);
+            app(AuditService::class)->record('oauth_client.revoked', $application, ['client_id' => $locked->getKey()]);
+        });
+    }
+
+    public function updateRedirects(Application $application, OAuthClient $client, array $attributes): OAuthClient
+    {
+        return DB::transaction(function () use ($application, $client, $attributes): OAuthClient {
+            // Match issuance's client-before-application lock order.
+            $locked = OAuthClient::query()->where('application_id', $application->getKey())
+                ->lockForUpdate()->findOrFail($client->getKey());
+            $application = Application::query()->lockForUpdate()->findOrFail($application->getKey());
+            abort_if($locked->revoked || $application->status !== ApplicationStatus::Active, 409);
+            abort_unless($locked->updated_at->equalTo(Carbon::parse($attributes['updated_at'])), 409);
+            $locked->redirect_uris = $attributes['redirect_uris'];
+            // Database timestamps have second precision; every edit must advance
+            // the optimistic version even when administrators save within a second.
+            $timestamp = now()->startOfSecond();
+            $locked->updated_at = $timestamp->greaterThan($locked->updated_at)
+                ? $timestamp : $locked->updated_at->copy()->addSecond();
+            $locked->save();
+            app(AuditService::class)->record('oauth_client.redirects_updated', $application, ['changed_fields' => ['redirect_uris'], 'client_id' => $locked->getKey()]);
+
+            return $locked->load('application');
         });
     }
 }

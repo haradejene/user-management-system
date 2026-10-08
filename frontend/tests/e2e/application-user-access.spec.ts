@@ -75,7 +75,7 @@ test("assigned but ineffective access retains the assignment and exact backend r
   await expect(row.getByText("No — Not effective")).toBeVisible(); await expect(row.getByText("user_suspended")).toBeVisible(); await expect(row.getByRole("button", { name: "Revoke access" })).toBeEnabled();
 });
 test("application assignment API failure stays visible until Retry succeeds", async ({ page }) => {
-  const api = await fixtures(page, true, true); await open(page); await expect(page.getByRole("main").getByRole("alert")).toHaveText("User access unavailable.");
+  const api = await fixtures(page, true, true); await open(page); await expect(page.getByRole("main").getByRole("alert")).toHaveText("The identity service could not complete the request. Try again later.");
   api.recover(); await page.getByRole("button", { name: "Retry", exact: true }).click(); await expect(page.getByRole("cell", { name: "Person 00", exact: true })).toBeVisible();
 });
 test("switching applications replaces assigned users", async ({ page }) => {
@@ -95,4 +95,13 @@ test("global Application Access remains a separate functional view", async ({ pa
   await fixtures(page); await page.goto("/application-access"); await expect(page.getByRole("heading", { name: "Application access", exact: true })).toBeVisible({ timeout: 15_000 });
   await expect(page.getByLabel("User", { exact: true })).toBeVisible(); await expect(page.getByRole("checkbox")).toBeChecked();
   await expect(page.getByText("effective access", { exact: true })).toBeVisible();
+});
+
+ test("inactive identity is visible but cannot receive an application grant", async ({ page }) => {
+  const api = await fixtures(page); await open(page); await openPicker(page);
+  await page.getByLabel("Search users to grant access").fill("Suspended person");
+  await page.getByLabel("User", { exact: true }).selectOption(suspended.id);
+  await expect(page.getByText("Selected user: Suspended person")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Grant assignment" })).toBeDisabled();
+  expect(api.requests.some((request) => request.method === "POST")).toBe(false);
 });

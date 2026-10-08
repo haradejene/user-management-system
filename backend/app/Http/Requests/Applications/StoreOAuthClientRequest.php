@@ -23,7 +23,11 @@ class StoreOAuthClientRequest extends FormRequest
                 'string',
                 'url',
                 'max:2048',
+                'distinct:strict',
                 function (string $attribute, mixed $value, Closure $fail): void {
+                    if (str_contains((string) $value, '*') || trim((string) $value) !== $value) {
+                        $fail('Redirect URIs must be exact values without wildcards or surrounding whitespace.');
+                    }
                     if (parse_url((string) $value, PHP_URL_FRAGMENT) !== null) {
                         $fail('Redirect URIs must not contain a fragment.');
                     }

@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Enums\AccountStatus;
 use App\Enums\ApplicationStatus;
 use App\Enums\MembershipStatus;
 use App\Events\IamActivityOccurred;
@@ -56,6 +57,9 @@ class ApplicationAccessService
 
             abort_unless($administrator?->isCentralIamAdministrator(), 403);
             abort_if(! $user || $user->trashed(), 404);
+            if ($user->status !== AccountStatus::Active) {
+                throw ValidationException::withMessages(['user' => 'Access cannot be granted to an inactive or suspended user.']);
+            }
             if (! $application || $application->trashed() || $application->status !== ApplicationStatus::Active) {
                 throw ValidationException::withMessages([
                     'application_id' => 'Access cannot be granted to an inactive application.',

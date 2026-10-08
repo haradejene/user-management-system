@@ -6,6 +6,10 @@ import type { OAuthClient, OAuthClientCreation, OAuthClientInput } from "@/types
 export interface ApplicationInput { name: string; slug: string; description?: string | null }
 
 export const applicationsService = {
+  async updateOAuthRedirects(application: string, client: string, redirect_uris: string[], updated_at: string | null): Promise<OAuthClient> {
+    const response = await apiClient.patch<ApiResponse<OAuthClient>>(`/api/admin/applications/${application}/oauth-clients/${client}/redirect-uris`, { redirect_uris, updated_at });
+    return response.data.data;
+  },
   async oauthClients(application: string, page = 1, perPage = 25): Promise<PaginatedResponse<OAuthClient>> {
     const response = await apiClient.get<PaginatedResponse<OAuthClient>>(`/api/admin/applications/${application}/oauth-clients`, { params: { page: Math.max(1, Math.floor(page)), per_page: Math.min(100, Math.max(1, Math.floor(perPage))) } });
     return response.data;

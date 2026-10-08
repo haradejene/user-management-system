@@ -67,7 +67,7 @@ export function ApplicationUserAccessGrant({ applicationId, applicationName, onG
   }
   async function grant(event: React.FormEvent) {
     event.preventDefault();
-    if (!user || pending.current) return;
+    if (!user || user.status !== "active" || pending.current) return;
     const selected = user;
     pending.current = true; setBusy(true); setErrors([]);
     try {
@@ -94,9 +94,9 @@ export function ApplicationUserAccessGrant({ applicationId, applicationName, onG
           <div><label htmlFor="grant-user" className="block text-sm font-medium">User</label><select id="grant-user" value={userId} onChange={(e) => selectUser(e.target.value)} className="min-h-11 w-full rounded-md border border-slate-300 bg-white px-3"><option value="">Select a user</option>{options.map((item) => <option key={item.id} value={item.id}>{item.name} — {item.email}</option>)}</select></div>
           {result ? <Pagination currentPage={result.meta.current_page} lastPage={result.meta.last_page} onPageChange={(next) => requestList(next)} /> : null}
         </>}
-        {userId ? profileError ? <><Alert>{profileError}</Alert><Button type="button" variant="secondary" onClick={() => { ++profileRequests.current; setProfileError(null); setProfileRetry((n) => n + 1); }}>Retry selected user</Button></> : user ? <div className="rounded border p-3 text-sm"><p className="font-medium">Selected user: {user.name}</p><p>{user.email}</p><p>Account status: <StatusBadge status={user.status} /></p></div> : <LoadingState label="Loading selected user…" /> : null}
-        <p className="text-sm text-slate-500">The server decides whether this assignment can be granted. Effective access can differ from assignment status.</p>
-        <div className="flex gap-3"><Button type="submit" disabled={!user} isLoading={busy}>Grant assignment</Button><Button type="button" variant="secondary" onClick={onClose}>Cancel</Button></div>
+        {userId ? profileError ? <><Alert>{profileError}</Alert><Button type="button" variant="secondary" onClick={() => { ++profileRequests.current; setProfileError(null); setProfileRetry((n) => n + 1); }}>Retry selected user</Button></> : user ? <div className="rounded border p-3 text-sm"><p className="font-medium">Selected user: {user.name}</p><p>{user.email}</p><p>Doxa user ID: <code className="break-all">{user.id}</code></p><p>Account status: <StatusBadge status={user.status} /></p></div> : <LoadingState label="Loading selected user…" /> : null}
+        <p className="text-sm text-slate-500">Select an existing active Doxa identity explicitly. This grants IAM application access only; it does not create an HRM user, link by email, or assign business roles. Effective access requires an active user, application, and assignment.</p>
+        <div className="flex gap-3"><Button type="submit" disabled={!user || user.status !== "active"} isLoading={busy}>Grant assignment</Button><Button type="button" variant="secondary" onClick={onClose}>Cancel</Button></div>
       </fieldset>
     </form>
   </Modal>;

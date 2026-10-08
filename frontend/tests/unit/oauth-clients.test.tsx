@@ -27,7 +27,16 @@ async function openForm(confidential = true) {
   fireEvent.change(screen.getByLabelText("Redirect URIs"), { target: { value: "https://example.test/callback\ncustom://callback" } });
   fireEvent.change(screen.getByLabelText("Client type"), { target: { value: confidential ? "confidential" : "public" } });
 }
-const submit = () => fireEvent.click(screen.getByRole("button", { name: "Register client" }));
+const submit = () => { fireEvent.click(screen.getByRole("button", { name: "Register client" })); const confirm = screen.queryByRole("button", { name: "Create client" }); if (confirm) fireEvent.click(confirm); };
+it("requires review before creating and preserves exact redirect values", async () => {
+  render(<ApplicationOAuthClients applicationId="app" />); await openForm();
+  fireEvent.change(screen.getByLabelText("Redirect URIs"), { target: { value: " https://example.test/Callback?Case=Value%2F " } });
+  fireEvent.click(screen.getByRole("button", { name: "Register client" }));
+  expect(screen.getByRole("region", { name: "Review OAuth configuration" })).toHaveTextContent("S256");
+  expect(service.createOAuthClient).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Create client" }));
+  await waitFor(() => expect(service.createOAuthClient).toHaveBeenCalledWith("app", { name: "New client", confidential: true, redirect_uris: [" https://example.test/Callback?Case=Value%2F "] }));
+});
 
 it("loads all safe client metadata, complete URIs and server grants without credentials", async () => {
   service.oauthClients.mockResolvedValue(page([{ ...client, secret: "hidden-hash", client_secret: secret } as OAuthClient]));

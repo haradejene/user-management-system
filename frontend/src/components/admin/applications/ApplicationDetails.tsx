@@ -8,6 +8,7 @@ import { LoadingState } from "@/components/ui/LoadingState";
 import { applicationsService } from "@/services/applications.service";
 import { getApiErrorMessage } from "@/services/api-client";
 import type { Application } from "@/types/application";
+import { ApplicationHistory } from "./ApplicationHistory";
 import { ApplicationOverview } from "./ApplicationOverview";
 import { ApplicationOAuthClients } from "./ApplicationOAuthClients";
 import { ApplicationUserAccess } from "./ApplicationUserAccess";
@@ -37,6 +38,7 @@ function ApplicationDetailState({ id, tab }: { id: string; tab: ApplicationTab }
       <div className="mb-6"><StatusBadge status={application.status} /></div>
       <ApplicationTabs id={application.id} selected={tab} />
       {tab === "settings" ? <ApplicationSettings application={application} onChanged={setApplication} /> : tab === "oauth-clients" ? <ApplicationOAuthClients applicationId={id} /> : tab === "user-access" ? <ApplicationUserAccess applicationId={id} applicationName={application.name} /> : <ApplicationOverview application={application} />}
+      <ApplicationHistory key={`${id}-${tab}`} applicationId={id} />
     </> : null}
   </AdminPage>;
 }

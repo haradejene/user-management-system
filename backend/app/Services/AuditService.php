@@ -24,7 +24,7 @@ class AuditService
             'subject_type' => $subject ? strtolower(class_basename($subject)) : null,
             'subject_id' => $subject?->public_id,
             'metadata' => array_intersect_key($metadata, array_flip([
-                'changed_fields', 'previous_status', 'status', 'company_id', 'application_id', 'reason',
+                'changed_fields', 'previous_status', 'status', 'company_id', 'application_id', 'client_id', 'reason',
             ])),
             'ip_address' => $this->request->ip(),
             'user_agent' => mb_substr($this->request->userAgent() ?? '', 0, 1024),

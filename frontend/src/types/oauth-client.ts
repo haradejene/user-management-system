@@ -9,6 +9,11 @@ export interface OAuthClient {
   grant_types: string[];
   created_at: string | null;
   updated_at: string | null;
+  pkce_required?: boolean;
+  pkce_method?: string | null;
+  allowed_scopes?: string[];
+  issuer?: string;
+  discovery_url?: string;
 }
 
 export interface OAuthClientInput {

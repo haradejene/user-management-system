@@ -9,6 +9,7 @@ use App\Services\OAuthClientService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
+use Laravel\Passport\Passport;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
@@ -25,6 +26,9 @@ class OAuthClientReadTest extends TestCase
             'id' => $client->id, 'name' => $client->name, 'application_id' => $application->public_id,
             'redirect_uris' => $client->redirect_uris, 'confidential' => true,
             'grant_types' => ['authorization_code', 'refresh_token'], 'revoked' => false,
+            'pkce_required' => true, 'pkce_method' => 'S256', 'allowed_scopes' => Passport::scopeIds(),
+            'issuer' => config('oidc.issuer') ?? config('app.url'),
+            'discovery_url' => rtrim(config('oidc.issuer') ?? config('app.url'), '/').'/.well-known/openid-configuration',
             'created_at' => $client->created_at->toISOString(), 'updated_at' => $client->updated_at->toISOString(),
         ];
         $list = $this->actingAs($admin)->getJson($this->url($application))->assertOk()->assertJsonCount(1, 'data');

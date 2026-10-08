@@ -1,7 +1,7 @@
 "use client";
 
 import { AxiosError } from "axios";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { AuthContext } from "@/hooks/useAuth";
 import { apiClient, getApiErrorMessage } from "@/services/api-client";
@@ -14,6 +14,8 @@ export function AuthProvider({
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const authenticated = useRef(false);
+  useLayoutEffect(() => { authenticated.current = user !== null; }, [user]);
 
   useEffect(() => {
     const interceptor = apiClient.interceptors.response.use(
@@ -26,7 +28,7 @@ export function AuthProvider({
             requestError.response?.data?.message === "Your account is not active.";
           if (status === 401 || inactiveAccount) {
             setUser(null);
-            if (user) {
+            if (authenticated.current) {
               setError(inactiveAccount
                 ? "Your account is not active."
                 : "Your session has expired. Please log in again.");
@@ -38,7 +40,7 @@ export function AuthProvider({
     );
 
     return () => apiClient.interceptors.response.eject(interceptor);
-  }, [user]);
+  }, []);
 
   const refresh = useCallback(async (): Promise<void> => {
     setIsLoading(true);
