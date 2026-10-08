@@ -5,6 +5,7 @@ declare(strict_types=1);
 require dirname(__DIR__, 2).'/vendor/autoload.php';
 
 use Doxa\Laravel\Authorization\Authorization;
+use Doxa\Laravel\Authorization\AuthorizationOptions;
 use Doxa\Laravel\Config\DoxaConfig;
 use Doxa\Laravel\Discovery\ProviderMetadata;
 use Doxa\Laravel\Exceptions\DoxaException;
@@ -56,11 +57,14 @@ try {
         'refresh_token' => 'REFRESH-SECRET', 'token_type' => 'Bearer', 'expires_in' => 900,
         'nested' => ['object' => $nested, 'closure' => $capture]];
     $transaction = null;
-    if (! in_array($scenario, ['create', 'claim', 'finish', 'storage', 'authorization', 'metadata', 'callback', 'configuration', 'configuration_url'], true)) {
+    if (! in_array($scenario, ['create', 'claim', 'finish', 'storage', 'authorization', 'authorization_options', 'metadata', 'callback', 'configuration', 'configuration_url'], true)) {
         $transaction = $h->store->claim($pending->state, $pending->browserBinding());
     }
     try {
         switch ($scenario) {
+            case 'authorization_options':
+                new AuthorizationOptions('TRACE-CLIENT-SECRET');
+                break;
             case 'validator':
                 $h->validator->validate($h->jwt(['aud' => 'wrong-client']), $transaction);
                 break;

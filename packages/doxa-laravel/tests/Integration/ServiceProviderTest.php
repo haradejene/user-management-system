@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Doxa\Laravel\Tests\Integration;
 
+use Doxa\Laravel\Authorization\AuthorizationOptions;
 use Doxa\Laravel\Config\DoxaConfig;
 use Doxa\Laravel\Contracts\Transport;
 use Doxa\Laravel\DoxaClient;
@@ -114,5 +115,23 @@ final class ServiceProviderTest extends TestCase
         } finally {
             $h->cleanup();
         }
+    }
+
+    public function test_laravel_route_requests_reauthentication_without_accepting_browser_options(): void
+    {
+        $fake = new FakeTransport;
+        $fake->responses[Harness::DISCOVERY] = Harness::metadata();
+        $this->app->instance(Transport::class, $fake);
+        $this->app['router']->middleware('web')->get('/sdk/reauthenticate',
+            fn (DoxaClient $client) => $client->beginLogin(AuthorizationOptions::reauthenticate()));
+        $start = $this->get('https://host.example.test/sdk/reauthenticate?prompt=none&state=ATTACKER');
+        $start->assertRedirect();
+        $url = $start->headers->get('Location');
+        parse_str(parse_url($url, PHP_URL_QUERY), $query);
+        self::assertSame('login', $query['prompt']);
+        self::assertSame(1, preg_match_all('/(?:[?&])prompt=/', $url));
+        self::assertNotSame('ATTACKER', $query['state']);
+        self::assertSame('S256', $query['code_challenge_method']);
+        self::assertGuest();
     }
 }

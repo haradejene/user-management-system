@@ -37,7 +37,7 @@ final class Authorization
         return $transaction;
     }
 
-    public function url(#[\SensitiveParameter] AuthorizationTransaction $transaction): string
+    public function url(#[\SensitiveParameter] AuthorizationTransaction $transaction, ?AuthorizationOptions $options = null): string
     {
         $parameters = [
             'response_type' => 'code', 'client_id' => $transaction->clientId,
@@ -46,6 +46,9 @@ final class Authorization
             'code_challenge' => rtrim(strtr(base64_encode(hash('sha256', $transaction->verifier(), true)), '+/', '-_'), '='),
             'code_challenge_method' => 'S256',
         ];
+        if ($options?->prompt !== null) {
+            $parameters['prompt'] = $options->prompt;
+        }
         // Reject endpoint query parameters that could shadow protocol parameters.
         $existing = parse_url($transaction->provider->authorizationEndpoint, PHP_URL_QUERY);
         if ($existing !== null && $existing !== '') {

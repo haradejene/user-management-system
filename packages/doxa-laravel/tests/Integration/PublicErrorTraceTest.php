@@ -20,7 +20,8 @@ final class PublicErrorTraceTest extends TestCase
             'exchange' => 'token_exchange_failure', 'replay' => 'transaction_replay', 'uncertain' => 'token_exchange_failure',
             'authorization' => 'invalid_issuer', 'metadata' => 'invalid_issuer', 'storage' => 'transaction_storage_failure',
             'transport' => 'http_failure', 'callback' => 'authorization_error', 'jwks' => 'invalid_signature',
-            'configuration' => 'configuration_error', 'configuration_url' => 'configuration_error'];
+            'configuration' => 'configuration_error', 'configuration_url' => 'configuration_error',
+            'authorization_options' => 'unsupported_authorization_option'];
 
         return array_map(static fn ($path, $category) => [$path, $category], array_keys($paths), array_values($paths));
     }
@@ -52,6 +53,7 @@ final class PublicErrorTraceTest extends TestCase
             self::assertNotContains($helper, $result['functions'], 'Sensitive validation helpers must return before the public exception is constructed');
         }
         $legitimateBoundaries = [
+            'Doxa\Laravel\Authorization\AuthorizationOptions::__construct#0',
             'Doxa\Laravel\Identity\DoxaIdentity::authenticate#0', 'Doxa\Laravel\Identity\DoxaIdentity::authenticate#1',
             'Doxa\Laravel\Identity\DoxaIdentity::authenticate#2', 'Doxa\Laravel\Oidc\IdTokenValidator::validate#0',
             'Doxa\Laravel\Oidc\IdTokenValidator::validate#1', 'Doxa\Laravel\Oidc\UserInfo::fetch#0',

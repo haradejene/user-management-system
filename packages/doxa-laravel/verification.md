@@ -1,4 +1,60 @@
-# Milestone 1 verification
+# Authorization-options milestone verification
+
+Verified 2026-10-07 on PHP 8.2.12 and Composer 2.10.1 against Universal SDK Contract v1.1 (`../../docs/doxa-sdk-contract.md`). The contract was extended before finalizing the Laravel implementation. This milestone changes only the SDK and universal contract; it does not modify IAM, HRM, account linking, provisioning, role mapping or refresh-token support. No commits or pushes were made.
+
+## Public API and security boundary
+
+`DoxaClient::beginLogin(?AuthorizationOptions $options = null)` accepts the final, immutable `Doxa\Laravel\Authorization\AuthorizationOptions` value. `AuthorizationOptions::reauthenticate()` and `new AuthorizationOptions(prompt: 'login')` request exactly one outgoing `prompt=login`. Existing no-argument calls, explicit null and default options omit prompt and preserve the complete previous authorization URL construction. RFC 3986 encoding remains unchanged.
+
+Only null and the exact string `login` are accepted. All other strings fail before discovery, transaction creation or redirect with `AuthorizationException` category `unsupported_authorization_option`, without echoing input or chaining an exception. Incorrect types and unknown named parameters are PHP programming errors before login side effects. There is no arbitrary query-parameter map or browser/callback adapter. Browser query values cannot override trusted options or security parameters; callback prompt values are ignored and scrubbed. Sensitive constructor/login arguments are redacted in public error traces.
+
+Production changes are limited to the options value, optional public method argument and allowlisted addition in authorization URL construction. State, nonce, PKCE/S256, transaction creation/storage/session binding/expiry/provenance/claim/replay, code exchange, issuer/audience/signature/JWKS/ID-token and UserInfo validation are unchanged. No transaction/configuration fields, dependencies or token endpoint behavior changed. Both `composer.json` and `composer.lock` remain byte-for-byte unchanged from the task baseline.
+
+`login` requests provider reauthentication; it does not request account selection or guarantee a different account, an `auth_time` claim or a particular authentication method. `select_account` is rejected today and requires provider/IAM support plus a future explicit contract and SDK extension. Live IAM/provider reauthentication was not exercised by these fixture-backed SDK tests.
+
+## Current verification results
+
+The pre-change suite passed with 194 tests / 1,710 assertions. The final suite adds 25 tests / 182 assertions, preserving all existing tests and security assertions. Every complete run below passed with 219 tests / 1,892 assertions and no errors, failures or skipped tests.
+
+| Environment | Laravel | Testbench | PHPUnit | Complete PHPUnit | PHPStan / Pint / platform / manifest |
+| --- | --- | --- | --- | --- | --- |
+| Laravel 10 independent lock | 10.50.2 | 8.38.0 | 10.5.66 | 219 tests / 1,892 assertions | Passed |
+| Laravel 11 independent lock | 11.57.0 | 9.18.0 | 11.5.57 | 219 tests / 1,892 assertions | Passed |
+| Laravel 12 independent lock | 12.69.3 | 10.12.0 | 11.5.57 | 219 tests / 1,892 assertions | Passed |
+| Restored checked-in baseline | 12.69.3 | 10.12.0 | 11.5.56 | 219 tests / 1,892 assertions | Passed |
+
+The matrix reused existing independently resolved lockfiles via Composer install, sequentially because profiles share vendor. No security-blocking override or advisory suppression was used in this milestone. Matrix manifest checks use strict validation with `--no-check-all --no-check-publish` because exact fixture pins are intentional; the real package passes unqualified `composer validate --strict`. The checked-in baseline vendor was restored after the matrix.
+
+Additional checks:
+
+- Focused authorization-options, public-error-trace and service-provider tests: 53 tests / 1,442 assertions passed.
+- Dedicated public-error/sensitive-parameter regression tests: 25 tests / 1,298 assertions passed. Dedicated independent-process concurrency tests: 5 tests / 76 assertions passed.
+- Final Composer scripts `test`, `analyse` (PHPStan level 5) and `check-format` (Pint) passed.
+- Composer install/lock/platform checks and package `composer validate --strict` passed.
+- `git diff --check` passed; the prior IAM onboarding patch still reverse-applies cleanly, confirming that work was preserved.
+
+Complete suites retain state/nonce/PKCE, binding/expiry, provenance, replay, file/SQLite process races and crashed-claimant protection, callback scrubbing, ID-token/JWKS/issuer/audience, UserInfo and safe-error coverage. New tests assert exact default URL bytes, prompt encoding and uniqueness, unsupported-value rejection, arbitrary parameter-map/named-parameter rejection, immutability, browser override rejection, callback prompt handling and unchanged query-bearing discovery endpoint rejection. A real Laravel web route also exercises explicit reauthentication with hostile browser parameters.
+
+### Composer audit results and limitations
+
+Composer audits completed after transient Packagist timeouts were retried. Laravel 10's historical compatibility lock reports 10 advisories (six Guzzle, four Laravel); Laravel 11 reports four Laravel advisories. Laravel 12 and the restored checked-in baseline report zero advisories and no abandoned packages. These pre-existing dependency findings are not passing security audits, despite passing SDK regression tests; this narrow milestone does not upgrade host dependencies or suppress advisory policy. The earlier compatibility record below contains the historical advisory identifiers and resolution context.
+
+Generated manifests/locks, per-step logs, matrix JUnit XML and `results.json` are ignored local evidence in `.compatibility/authorization-options/` and `.compatibility/`. The local runner resumes completed checks and restores the baseline even after failure; it is verification evidence, not a new public SDK tool. Other PHP runtimes, live IAM, real HRM integration and Redis/PostgreSQL deployments were not tested.
+
+## Exact files changed in this milestone
+
+- `src/Authorization/AuthorizationOptions.php` (new allowlisted immutable options value).
+- `src/Authorization/Authorization.php` (optional outgoing prompt only).
+- `src/DoxaClient.php` (backward-compatible optional typed argument).
+- `tests/Integration/AuthorizationOptionsTest.php` (new focused regressions).
+- `tests/Integration/ServiceProviderTest.php` (Laravel web-route coverage).
+- `tests/Integration/PublicErrorTraceTest.php` (safe unsupported-option trace coverage).
+- `tests/Fixtures/public-error-trace.php` (sensitive-input trace fixture).
+- `README.md` (API, example, trusted-input boundary and OIDC semantics).
+- `verification.md` (this current record; previous evidence retained below).
+- `../../docs/doxa-sdk-contract.md` (language-neutral v1.1 options contract and AC21).
+
+# Historical Milestone 1 verification
 
 ## Laravel 10-12 compatibility implementation
 

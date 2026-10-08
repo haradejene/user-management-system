@@ -1,6 +1,6 @@
 # Doxa Laravel SDK v1 — Milestone 1
 
-A reusable OIDC relying-party package for Laravel 10, 11 and 12 on PHP 8.2+. Doxa IAM owns central authentication and application access. This package implements Doxa Universal SDK Contract v1.0 and returns a validated, immutable `DoxaIdentity`. The same SDK v1 package and public API work across these Laravel versions; integration does not require upgrading the host's Laravel version. Laravel 9 and PHP below 8.2 are unsupported.
+A reusable OIDC relying-party package for Laravel 10, 11 and 12 on PHP 8.2+. Doxa IAM owns central authentication and application access. This package implements Doxa Universal SDK Contract v1.1 and returns a validated, immutable `DoxaIdentity`. The same SDK v1 package and public API work across these Laravel versions; integration does not require upgrading the host's Laravel version. Laravel 9 and PHP below 8.2 are unsupported.
 
 ```text
 Continue with Doxa
@@ -104,6 +104,31 @@ public function callback(Request $request, DoxaClient $doxa)
 `beginLogin()` returns a Laravel redirect. `handleCallback()` returns `DoxaIdentity`; it never calls `Auth::login`, provisions accounts or establishes the application's authenticated session. Optional `discover()` returns typed validated metadata. Protocol services are internal infrastructure, not alternate login APIs. Store creation requires an SDK-generated transaction, and authorization checks provider metadata against trusted discovery. Exchange and validation services require the same transaction store that issued the claimed transaction object; caller-constructed, cloned, expired or finished transactions fail closed. `TransactionStore` implementations must enforce claimed-object provenance and atomic single-use exchange through `assertClaimed()` and `consume()`. Direct exchange is terminal even after an uncertain transport outcome.
 
 The callback parser reads the original query string, detects duplicate code/state/error (including encoded keys/array forms), and scrubs query data from the request before subsequent host diagnostics. Missing or substituted state/browser context never exchanges a code. Once claimed, provider denial, token errors, uncertain network outcomes and validation failures are terminal. Do not retry a code exchange; start a new login instead.
+
+### Authorization options and forced reauthentication
+
+`beginLogin(?AuthorizationOptions $options = null)` accepts an immutable, allowlisted value supplied by trusted server-side application code. Existing `$doxa->beginLogin()` calls continue unchanged: no `prompt` is sent, and normal Doxa SSO behavior applies. Explicit `null` or `new AuthorizationOptions()` also leaves the request unchanged. The SDK continues to construct the complete authorization request.
+
+To explicitly request provider reauthentication:
+
+```php
+use Doxa\Laravel\Authorization\AuthorizationOptions;
+use Doxa\Laravel\DoxaClient;
+
+public function reauthenticate(DoxaClient $doxa)
+{
+    return $doxa->beginLogin(AuthorizationOptions::reauthenticate());
+    // Equivalent: $doxa->beginLogin(new AuthorizationOptions(prompt: 'login'));
+}
+```
+
+This adds exactly one `prompt=login` to the outgoing request, using the SDK's existing RFC 3986 encoder. It requests a fresh provider authentication interaction instead of ordinary reuse of an SSO session. A host workflow that needs reauthentication should choose this option explicitly on the server. This SDK capability does not implement account linking or change any host identity/local-account policy.
+
+**`prompt=login` is not account selection.** [OIDC Core](https://openid.net/specs/openid-connect-core-1_0.html#AuthRequest) distinguishes reauthentication (`login`) from account selection (`select_account`). The current SDK exposes only `login`; future `select_account` requires IAM/provider support and an explicit contract/SDK extension. Reauthentication is not a guarantee of switching accounts, an `auth_time` claim, or a particular authentication method. Existing ID-token validation is unchanged.
+
+The only accepted prompt values are absence (`null`) and the exact string `login`. Unsupported values such as `select_account`, `none`, `consent`, combined prompts, arbitrary strings, empty strings and whitespace/case variants throw `AuthorizationException` with safe category `unsupported_authorization_option` before discovery, transaction creation or redirect. The error never echoes the rejected input or chains a low-level exception. Incorrect argument types/unknown named parameters are programming errors rejected by PHP before login side effects.
+
+There is no arbitrary parameter map, `fromArray` request adapter or security-parameter override. Never construct options from `$request->query()` or callback data; choose an explicit option for the trusted server-side route/workflow. Browser query parameters are not read as options and cannot override the SDK's selected prompt, state, nonce, client, redirect URI, scopes or S256. Callback `prompt` is ignored and scrubbed with other callback query data. Options affect only the outgoing request; they are not stored as transaction fields or sent to the token endpoint, and do not change binding, expiry, claims/provenance, replay handling, exchange, ID-token/JWKS or UserInfo validation.
 
 ## Identity and UserInfo
 

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Doxa\Laravel;
 
 use Doxa\Laravel\Authorization\Authorization;
+use Doxa\Laravel\Authorization\AuthorizationOptions;
 use Doxa\Laravel\Authorization\BrowserContext;
 use Doxa\Laravel\Authorization\Callback;
 use Doxa\Laravel\Config\DoxaConfig;
@@ -46,12 +47,12 @@ final class DoxaClient
         return ['client' => '[redacted]'];
     }
 
-    public function beginLogin(): RedirectResponse
+    public function beginLogin(#[\SensitiveParameter] ?AuthorizationOptions $options = null): RedirectResponse
     {
         try {
             $provider = $this->discover();
             $transaction = $this->authorization->create($this->config, $provider, $this->browser->binding($this->request));
-            $url = $this->authorization->url($transaction);
+            $url = $this->authorization->url($transaction, $options);
             $this->transactions->create($transaction);
 
             return new RedirectResponse($url, 302, ['Cache-Control' => 'no-store', 'Referrer-Policy' => 'no-referrer']);
