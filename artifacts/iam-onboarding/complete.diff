@@ -1,0 +1,1085 @@
+diff --git a/backend/app/Http/Controllers/Applications/OAuthClientController.php b/backend/app/Http/Controllers/Applications/OAuthClientController.php
+index c9e95c4..131649d 100644
+--- a/backend/app/Http/Controllers/Applications/OAuthClientController.php
++++ b/backend/app/Http/Controllers/Applications/OAuthClientController.php
+@@ -5,9 +5,9 @@
+ use App\Http\Controllers\Controller;
+ use App\Http\Requests\Applications\ListOAuthClientsRequest;
+ use App\Http\Requests\Applications\StoreOAuthClientRequest;
++use App\Http\Requests\Applications\UpdateOAuthRedirectsRequest;
+ use App\Http\Resources\OAuthClientResource;
+ use App\Models\Application;
+-use App\Models\OAuthClient;
+ use App\Services\OAuthClientService;
+ use Illuminate\Http\JsonResponse;
+ use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
+@@ -37,14 +37,20 @@ public function store(StoreOAuthClientRequest $request, Application $application
+         return response()->json([
+             'data' => $resource,
+             ...($client->plainSecret !== null ? ['client_secret' => $client->plainSecret] : []),
+-        ], Response::HTTP_CREATED);
++        ], Response::HTTP_CREATED, ['Cache-Control' => 'no-store']);
+     }
+ 
+-    public function revoke(Application $application, OAuthClient $client, OAuthClientService $clients): Response
++    public function revoke(Application $application, string $client, OAuthClientService $clients): Response
+     {
++        $this->authorize('update', $application);
+         abort_if($application->trashed(), Response::HTTP_NOT_FOUND);
+-        $clients->revoke($application, $client);
++        $clients->revoke($application, $clients->find($application, $client));
+ 
+         return response()->noContent();
+     }
++
++    public function updateRedirects(UpdateOAuthRedirectsRequest $request, Application $application, string $client, OAuthClientService $clients): OAuthClientResource
++    {
++        return new OAuthClientResource($clients->updateRedirects($application, $clients->find($application, $client), $request->validated()));
++    }
+ }
+diff --git a/backend/app/Http/Requests/Applications/StoreOAuthClientRequest.php b/backend/app/Http/Requests/Applications/StoreOAuthClientRequest.php
+index c816be3..7ba2a31 100644
+--- a/backend/app/Http/Requests/Applications/StoreOAuthClientRequest.php
++++ b/backend/app/Http/Requests/Applications/StoreOAuthClientRequest.php
+@@ -23,7 +23,11 @@ public function rules(): array
+                 'string',
+                 'url',
+                 'max:2048',
++                'distinct:strict',
+                 function (string $attribute, mixed $value, Closure $fail): void {
++                    if (str_contains((string) $value, '*') || trim((string) $value) !== $value) {
++                        $fail('Redirect URIs must be exact values without wildcards or surrounding whitespace.');
++                    }
+                     if (parse_url((string) $value, PHP_URL_FRAGMENT) !== null) {
+                         $fail('Redirect URIs must not contain a fragment.');
+                     }
+diff --git a/backend/app/Http/Resources/OAuthClientResource.php b/backend/app/Http/Resources/OAuthClientResource.php
+index a8999e8..4ddfa16 100644
+--- a/backend/app/Http/Resources/OAuthClientResource.php
++++ b/backend/app/Http/Resources/OAuthClientResource.php
+@@ -4,6 +4,7 @@
+ 
+ use Illuminate\Http\Request;
+ use Illuminate\Http\Resources\Json\JsonResource;
++use Laravel\Passport\Passport;
+ 
+ class OAuthClientResource extends JsonResource
+ {
+@@ -17,6 +18,11 @@ public function toArray(Request $request): array
+             'confidential' => $this->confidential(),
+             'grant_types' => $this->grant_types,
+             'revoked' => (bool) $this->revoked,
++            'pkce_required' => $this->hasGrantType('authorization_code'),
++            'pkce_method' => $this->hasGrantType('authorization_code') ? 'S256' : null,
++            'allowed_scopes' => Passport::scopeIds(),
++            'issuer' => config('oidc.issuer') ?? config('app.url'),
++            'discovery_url' => rtrim(config('oidc.issuer') ?? config('app.url'), '/').'/.well-known/openid-configuration',
+             'created_at' => $this->created_at?->toISOString(),
+             'updated_at' => $this->updated_at?->toISOString(),
+         ];
+diff --git a/backend/app/Services/ApplicationAccessService.php b/backend/app/Services/ApplicationAccessService.php
+index 4449c48..e41d8e8 100644
+--- a/backend/app/Services/ApplicationAccessService.php
++++ b/backend/app/Services/ApplicationAccessService.php
+@@ -2,6 +2,7 @@
+ 
+ namespace App\Services;
+ 
++use App\Enums\AccountStatus;
+ use App\Enums\ApplicationStatus;
+ use App\Enums\MembershipStatus;
+ use App\Events\IamActivityOccurred;
+@@ -56,6 +57,9 @@ public function grant(User $user, Application $application, User $administrator)
+ 
+             abort_unless($administrator?->isCentralIamAdministrator(), 403);
+             abort_if(! $user || $user->trashed(), 404);
++            if ($user->status !== AccountStatus::Active) {
++                throw ValidationException::withMessages(['user' => 'Access cannot be granted to an inactive or suspended user.']);
++            }
+             if (! $application || $application->trashed() || $application->status !== ApplicationStatus::Active) {
+                 throw ValidationException::withMessages([
+                     'application_id' => 'Access cannot be granted to an inactive application.',
+diff --git a/backend/app/Services/AuditService.php b/backend/app/Services/AuditService.php
+index 8afb4f5..d27d49d 100644
+--- a/backend/app/Services/AuditService.php
++++ b/backend/app/Services/AuditService.php
+@@ -24,7 +24,7 @@ public function record(string $action, ?Model $subject = null, array $metadata =
+             'subject_type' => $subject ? strtolower(class_basename($subject)) : null,
+             'subject_id' => $subject?->public_id,
+             'metadata' => array_intersect_key($metadata, array_flip([
+-                'changed_fields', 'previous_status', 'status', 'company_id', 'application_id', 'reason',
++                'changed_fields', 'previous_status', 'status', 'company_id', 'application_id', 'client_id', 'reason',
+             ])),
+             'ip_address' => $this->request->ip(),
+             'user_agent' => mb_substr($this->request->userAgent() ?? '', 0, 1024),
+diff --git a/backend/app/Services/OAuthClientService.php b/backend/app/Services/OAuthClientService.php
+index e49633f..75c467c 100644
+--- a/backend/app/Services/OAuthClientService.php
++++ b/backend/app/Services/OAuthClientService.php
+@@ -6,6 +6,7 @@
+ use App\Models\Application;
+ use App\Models\OAuthClient;
+ use Illuminate\Contracts\Pagination\LengthAwarePaginator;
++use Illuminate\Support\Carbon;
+ use Illuminate\Support\Facades\DB;
+ use Illuminate\Support\Str;
+ use Laravel\Passport\ClientRepository;
+@@ -50,6 +51,7 @@ public function create(Application $application, array $attributes): OAuthClient
+             ]);
+             $client->secret = $confidential ? Str::random(40) : null;
+             $client->save();
++            app(AuditService::class)->record('oauth_client.created', $application, ['client_id' => $client->getKey()]);
+ 
+             return $client;
+         });
+@@ -61,6 +63,29 @@ public function revoke(Application $application, OAuthClient $client): void
+             $locked = OAuthClient::query()->lockForUpdate()->findOrFail($client->getKey());
+             abort_unless((int) $locked->application_id === (int) $application->getKey(), 404);
+             $this->passportClients->delete($locked);
++            app(AuditService::class)->record('oauth_client.revoked', $application, ['client_id' => $locked->getKey()]);
++        });
++    }
++
++    public function updateRedirects(Application $application, OAuthClient $client, array $attributes): OAuthClient
++    {
++        return DB::transaction(function () use ($application, $client, $attributes): OAuthClient {
++            // Match issuance's client-before-application lock order.
++            $locked = OAuthClient::query()->where('application_id', $application->getKey())
++                ->lockForUpdate()->findOrFail($client->getKey());
++            $application = Application::query()->lockForUpdate()->findOrFail($application->getKey());
++            abort_if($locked->revoked || $application->status !== ApplicationStatus::Active, 409);
++            abort_unless($locked->updated_at->equalTo(Carbon::parse($attributes['updated_at'])), 409);
++            $locked->redirect_uris = $attributes['redirect_uris'];
++            // Database timestamps have second precision; every edit must advance
++            // the optimistic version even when administrators save within a second.
++            $timestamp = now()->startOfSecond();
++            $locked->updated_at = $timestamp->greaterThan($locked->updated_at)
++                ? $timestamp : $locked->updated_at->copy()->addSecond();
++            $locked->save();
++            app(AuditService::class)->record('oauth_client.redirects_updated', $application, ['changed_fields' => ['redirect_uris'], 'client_id' => $locked->getKey()]);
++
++            return $locked->load('application');
+         });
+     }
+ }
+diff --git a/backend/bootstrap/app.php b/backend/bootstrap/app.php
+index b801028..e18b0ae 100644
+--- a/backend/bootstrap/app.php
++++ b/backend/bootstrap/app.php
+@@ -16,6 +16,7 @@
+         health: '/up',
+     )
+     ->withMiddleware(function (Middleware $middleware): void {
++        $middleware->trimStrings(except: ['redirect_uris.*']);
+         $middleware->statefulApi();
+         $middleware->appendToGroup('web', [EnsureAccountIsActive::class.':oauth', OidcAuthorizationTransaction::class]);
+         $middleware->alias([
+diff --git a/backend/routes/api.php b/backend/routes/api.php
+index c160fe9..33e4ee3 100644
+--- a/backend/routes/api.php
++++ b/backend/routes/api.php
+@@ -1,6 +1,7 @@
+ <?php
+ 
+ use App\Http\Controllers\Applications\ApplicationAccessController;
++use App\Http\Controllers\Applications\ApplicationAuditController;
+ use App\Http\Controllers\Applications\ApplicationController;
+ use App\Http\Controllers\Applications\ApplicationStatusController;
+ use App\Http\Controllers\Applications\OAuthClientController;
+@@ -50,9 +51,11 @@
+         Route::get('applications/{application:public_id}/oauth-clients', [OAuthClientController::class, 'index']);
+         Route::get('applications/{application:public_id}/oauth-clients/{client}', [OAuthClientController::class, 'show']);
+         Route::post('applications/{application:public_id}/oauth-clients', [OAuthClientController::class, 'store']);
++        Route::patch('applications/{application:public_id}/oauth-clients/{client}/redirect-uris', [OAuthClientController::class, 'updateRedirects']);
+         Route::patch('applications/{application:public_id}/oauth-clients/{client}/revoke', [OAuthClientController::class, 'revoke']);
+         Route::get('users/{user:public_id}/applications', [ApplicationAccessController::class, 'forUser']);
+         Route::post('users/{user:public_id}/applications', [ApplicationAccessController::class, 'store']);
+         Route::delete('users/{user:public_id}/applications/{application:public_id}', [ApplicationAccessController::class, 'destroy']);
+         Route::get('applications/{application:public_id}/users', [ApplicationAccessController::class, 'forApplication']);
++        Route::get('applications/{application:public_id}/history', ApplicationAuditController::class);
+     });
+diff --git a/backend/tests/Feature/Applications/OAuthClientReadTest.php b/backend/tests/Feature/Applications/OAuthClientReadTest.php
+index 21f19a2..55dde2c 100644
+--- a/backend/tests/Feature/Applications/OAuthClientReadTest.php
++++ b/backend/tests/Feature/Applications/OAuthClientReadTest.php
+@@ -9,6 +9,7 @@
+ use Illuminate\Foundation\Testing\RefreshDatabase;
+ use Illuminate\Support\Facades\Hash;
+ use Illuminate\Support\Str;
++use Laravel\Passport\Passport;
+ use PHPUnit\Framework\Attributes\DataProvider;
+ use Tests\TestCase;
+ 
+@@ -25,6 +26,9 @@ public function test_admin_reads_only_safe_metadata_for_clients_in_the_selected_
+             'id' => $client->id, 'name' => $client->name, 'application_id' => $application->public_id,
+             'redirect_uris' => $client->redirect_uris, 'confidential' => true,
+             'grant_types' => ['authorization_code', 'refresh_token'], 'revoked' => false,
++            'pkce_required' => true, 'pkce_method' => 'S256', 'allowed_scopes' => Passport::scopeIds(),
++            'issuer' => config('oidc.issuer') ?? config('app.url'),
++            'discovery_url' => rtrim(config('oidc.issuer') ?? config('app.url'), '/').'/.well-known/openid-configuration',
+             'created_at' => $client->created_at->toISOString(), 'updated_at' => $client->updated_at->toISOString(),
+         ];
+         $list = $this->actingAs($admin)->getJson($this->url($application))->assertOk()->assertJsonCount(1, 'data');
+diff --git a/frontend/src/components/admin/applications/ApplicationDetails.tsx b/frontend/src/components/admin/applications/ApplicationDetails.tsx
+index 5949686..bfaceed 100644
+--- a/frontend/src/components/admin/applications/ApplicationDetails.tsx
++++ b/frontend/src/components/admin/applications/ApplicationDetails.tsx
+@@ -8,6 +8,7 @@ import { LoadingState } from "@/components/ui/LoadingState";
+ import { applicationsService } from "@/services/applications.service";
+ import { getApiErrorMessage } from "@/services/api-client";
+ import type { Application } from "@/types/application";
++import { ApplicationHistory } from "./ApplicationHistory";
+ import { ApplicationOverview } from "./ApplicationOverview";
+ import { ApplicationOAuthClients } from "./ApplicationOAuthClients";
+ import { ApplicationUserAccess } from "./ApplicationUserAccess";
+@@ -37,6 +38,7 @@ function ApplicationDetailState({ id, tab }: { id: string; tab: ApplicationTab }
+       <div className="mb-6"><StatusBadge status={application.status} /></div>
+       <ApplicationTabs id={application.id} selected={tab} />
+       {tab === "settings" ? <ApplicationSettings application={application} onChanged={setApplication} /> : tab === "oauth-clients" ? <ApplicationOAuthClients applicationId={id} /> : tab === "user-access" ? <ApplicationUserAccess applicationId={id} applicationName={application.name} /> : <ApplicationOverview application={application} />}
++      <ApplicationHistory key={`${id}-${tab}`} applicationId={id} />
+     </> : null}
+   </AdminPage>;
+ }
+diff --git a/frontend/src/components/admin/applications/ApplicationUserAccessGrant.tsx b/frontend/src/components/admin/applications/ApplicationUserAccessGrant.tsx
+index 3cbcbf9..b402a5d 100644
+--- a/frontend/src/components/admin/applications/ApplicationUserAccessGrant.tsx
++++ b/frontend/src/components/admin/applications/ApplicationUserAccessGrant.tsx
+@@ -67,7 +67,7 @@ export function ApplicationUserAccessGrant({ applicationId, applicationName, onG
+   }
+   async function grant(event: React.FormEvent) {
+     event.preventDefault();
+-    if (!user || pending.current) return;
++    if (!user || user.status !== "active" || pending.current) return;
+     const selected = user;
+     pending.current = true; setBusy(true); setErrors([]);
+     try {
+@@ -94,9 +94,9 @@ export function ApplicationUserAccessGrant({ applicationId, applicationName, onG
+           <div><label htmlFor="grant-user" className="block text-sm font-medium">User</label><select id="grant-user" value={userId} onChange={(e) => selectUser(e.target.value)} className="min-h-11 w-full rounded-md border border-slate-300 bg-white px-3"><option value="">Select a user</option>{options.map((item) => <option key={item.id} value={item.id}>{item.name} — {item.email}</option>)}</select></div>
+           {result ? <Pagination currentPage={result.meta.current_page} lastPage={result.meta.last_page} onPageChange={(next) => requestList(next)} /> : null}
+         </>}
+-        {userId ? profileError ? <><Alert>{profileError}</Alert><Button type="button" variant="secondary" onClick={() => { ++profileRequests.current; setProfileError(null); setProfileRetry((n) => n + 1); }}>Retry selected user</Button></> : user ? <div className="rounded border p-3 text-sm"><p className="font-medium">Selected user: {user.name}</p><p>{user.email}</p><p>Account status: <StatusBadge status={user.status} /></p></div> : <LoadingState label="Loading selected user…" /> : null}
+-        <p className="text-sm text-slate-500">The server decides whether this assignment can be granted. Effective access can differ from assignment status.</p>
+-        <div className="flex gap-3"><Button type="submit" disabled={!user} isLoading={busy}>Grant assignment</Button><Button type="button" variant="secondary" onClick={onClose}>Cancel</Button></div>
++        {userId ? profileError ? <><Alert>{profileError}</Alert><Button type="button" variant="secondary" onClick={() => { ++profileRequests.current; setProfileError(null); setProfileRetry((n) => n + 1); }}>Retry selected user</Button></> : user ? <div className="rounded border p-3 text-sm"><p className="font-medium">Selected user: {user.name}</p><p>{user.email}</p><p>Doxa user ID: <code className="break-all">{user.id}</code></p><p>Account status: <StatusBadge status={user.status} /></p></div> : <LoadingState label="Loading selected user…" /> : null}
++        <p className="text-sm text-slate-500">Select an existing active Doxa identity explicitly. This grants IAM application access only; it does not create an HRM user, link by email, or assign business roles. Effective access requires an active user, application, and assignment.</p>
++        <div className="flex gap-3"><Button type="submit" disabled={!user || user.status !== "active"} isLoading={busy}>Grant assignment</Button><Button type="button" variant="secondary" onClick={onClose}>Cancel</Button></div>
+       </fieldset>
+     </form>
+   </Modal>;
+diff --git a/frontend/src/components/admin/applications/OAuthClientDetail.tsx b/frontend/src/components/admin/applications/OAuthClientDetail.tsx
+index 15a334d..e33b6e6 100644
+--- a/frontend/src/components/admin/applications/OAuthClientDetail.tsx
++++ b/frontend/src/components/admin/applications/OAuthClientDetail.tsx
+@@ -9,11 +9,12 @@ import { Modal } from "@/components/ui/Modal";
+ import { applicationsService } from "@/services/applications.service";
+ import { getApiErrorMessage } from "@/services/api-client";
+ import type { OAuthClient } from "@/types/oauth-client";
++import { OAuthClientIntegration, OAuthRedirectEditor } from "./OAuthClientIntegration";
+ import { applicationDate } from "./ApplicationOverview";
+ 
+ export function OAuthClientMetadata({ client }: { client: OAuthClient }) {
+   return <dl className="space-y-3 text-sm">
+-    {[["Client name", client.name], ["Client ID", client.id], ["Client type", client.confidential ? "Confidential" : "Public"], ["Grant types", client.grant_types.join(", ")], ["Created at", applicationDate(client.created_at)], ["Updated at", applicationDate(client.updated_at)]].map(([label, value]) => <div key={label}><dt className="text-slate-500">{label}</dt><dd className="break-all">{value}</dd></div>)}
++    {[["Client name", client.name], ["Client ID", client.id], ["Client type", client.confidential ? "Confidential" : "Public"], ["Grant types", client.grant_types.join(", ")], ["PKCE", client.pkce_required === undefined ? "Unavailable" : client.pkce_required ? `Required; method ${client.pkce_method}` : "Not applicable"], ["Allowed scopes", client.allowed_scopes?.join(", ") ?? "Unavailable"], ["Created at", applicationDate(client.created_at)], ["Updated at", applicationDate(client.updated_at)]].map(([label, value]) => <div key={label}><dt className="text-slate-500">{label}</dt><dd className="break-all">{value}</dd></div>)}
+     <div><dt className="text-slate-500">Status</dt><dd><StatusBadge status={client.revoked ? "revoked" : "active"} /></dd></div>
+     <div><dt className="text-slate-500">Redirect URIs</dt><dd><ul>{client.redirect_uris.map((uri, index) => <li className="break-all" key={index}>{uri}</li>)}</ul></dd></div>
+   </dl>;
+@@ -29,7 +30,7 @@ export function OAuthClientDetail({ applicationId, clientId, onClose }: { applic
+     return () => { cancelled = true; };
+   }, [applicationId, clientId, retry]);
+   return <Modal open title="OAuth client details" onClose={onClose}>
+-    <div className="max-h-[65vh] overflow-y-auto">{error ? <><Alert>{error}</Alert><Button onClick={() => { setError(null); setRetry((n) => n + 1); }}>Retry</Button></> : client ? <OAuthClientMetadata client={client} /> : <LoadingState label="Loading OAuth client…" />}</div>
++    <div className="max-h-[65vh] overflow-y-auto">{error ? <><Alert>{error}</Alert><Button onClick={() => { setError(null); setRetry((n) => n + 1); }}>Retry</Button></> : client ? <div className="space-y-6"><OAuthClientMetadata client={client} /><OAuthRedirectEditor applicationId={applicationId} client={client} onChanged={setClient} /><OAuthClientIntegration client={client} /></div> : <LoadingState label="Loading OAuth client…" />}</div>
+     <Button className="mt-4" variant="secondary" onClick={onClose}>Close</Button>
+   </Modal>;
+ }
+diff --git a/frontend/src/components/admin/applications/OAuthClientForm.tsx b/frontend/src/components/admin/applications/OAuthClientForm.tsx
+index efca623..ffd88b7 100644
+--- a/frontend/src/components/admin/applications/OAuthClientForm.tsx
++++ b/frontend/src/components/admin/applications/OAuthClientForm.tsx
+@@ -10,6 +10,7 @@ import { applicationsService } from "@/services/applications.service";
+ import { getApiErrorMessage } from "@/services/api-client";
+ import type { ValidationErrorResponse } from "@/types/api";
+ import type { OAuthClientCreation } from "@/types/oauth-client";
++import { OAuthClientIntegration } from "./OAuthClientIntegration";
+ import { OAuthClientMetadata } from "./OAuthClientDetail";
+ 
+ /** This component alone owns the creation response, including its one-time secret.
+@@ -18,6 +19,7 @@ export function OAuthClientForm({ applicationId, onCreated, onClose }: { applica
+   const [name, setName] = useState("");
+   const [uris, setUris] = useState("");
+   const [confidential, setConfidential] = useState(false);
++  const [review, setReview] = useState(false);
+   const [busy, setBusy] = useState(false);
+   const pending = useRef(false);
+   const mounted = useRef(true);
+@@ -25,17 +27,23 @@ export function OAuthClientForm({ applicationId, onCreated, onClose }: { applica
+   const [error, setError] = useState<string | null>(null);
+   const [created, setCreated] = useState<OAuthClientCreation | null>(null);
+   const [copyStatus, setCopyStatus] = useState("");
++  const summary = useRef<HTMLDivElement>(null);
++  const reviewHeading = useRef<HTMLElement>(null);
++  useEffect(() => { if (Object.keys(errors).length || error) summary.current?.focus(); }, [errors, error]);
++  useEffect(() => { if (review) reviewHeading.current?.focus(); }, [review]);
+   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+ 
+   async function submit(event: React.FormEvent) {
+     event.preventDefault();
+     if (pending.current) return;
+-    const redirect_uris = uris.split(/\r?\n/).map((uri) => uri.trim()).filter(Boolean);
++    const redirect_uris = uris.split(/\r?\n/).filter((uri) => uri !== "");
+     const validation: Record<string, string[]> = {};
+     if (!name.trim()) validation.name = ["Client name is required."];
+     if (!redirect_uris.length) validation.redirect_uris = ["At least one redirect URI is required."];
++    if (new Set(redirect_uris).size !== redirect_uris.length) validation.redirect_uris = ["Duplicate redirect URIs are not allowed."];
+     setErrors(validation); setError(null);
+     if (Object.keys(validation).length) return;
++    if (!review) { setReview(true); return; }
+     pending.current = true; setBusy(true);
+     try {
+       const response = await applicationsService.createOAuthClient(applicationId, { name: name.trim(), redirect_uris, confidential });
+@@ -43,6 +51,7 @@ export function OAuthClientForm({ applicationId, onCreated, onClose }: { applica
+       setCreated(response); onCreated();
+     } catch (e) {
+       if (!mounted.current) return;
++      setReview(false);
+       if (e instanceof AxiosError && e.response?.status === 422) setErrors((e.response.data as ValidationErrorResponse).errors ?? {});
+       setError(getApiErrorMessage(e));
+     } finally { pending.current = false; if (mounted.current) setBusy(false); }
+@@ -65,16 +74,17 @@ export function OAuthClientForm({ applicationId, onCreated, onClose }: { applica
+           <Button onClick={() => void copySecret()}>Copy secret</Button>
+           {copyStatus ? <p role="status" className="text-sm">{copyStatus}</p> : null}
+         </section> : <p role="status">OAuth client registered successfully.</p>}
+-        <Button variant="secondary" onClick={onClose}>Close</Button>
++        <OAuthClientIntegration client={created.data} /><Button variant="secondary" onClick={onClose}>Close</Button>
+       </> : <form noValidate onSubmit={submit} className="space-y-4">
+-        {error ? <Alert>{error}</Alert> : null}
++        {error || Object.keys(errors).length ? <div ref={summary} tabIndex={-1} role="alert" className="rounded border border-red-300 p-3 text-sm"><p>{error ?? "Review the highlighted fields."}</p>{Object.keys(errors).map((field) => <a className="mr-3 underline" key={field} href={field === "name" ? "#oauth-name" : field.startsWith("redirect_uris") ? "#redirect-uris" : "#client-type"}>Review {field === "name" ? "client name" : field.startsWith("redirect_uris") ? "redirect URIs" : "client type"}</a>)}</div> : null}
++        {review ? <section ref={reviewHeading} tabIndex={-1} aria-label="Review OAuth configuration" className="space-y-3 rounded border p-3"><h3 className="font-semibold">Review OAuth configuration</h3><p>{name}: {confidential ? "Confidential" : "Public"} client</p><ul>{uris.split(/\r?\n/).filter(Boolean).map((uri, index) => <li key={index} className="break-all">{uri}</li>)}</ul><p>PKCE: Required. Method: S256. OAuth grants and scopes are controlled by IAM.</p><Button type="button" variant="secondary" onClick={() => setReview(false)}>Edit configuration</Button></section> : null}
+         <fieldset disabled={busy} className="space-y-4">
+-          <FormField name="oauth-name" label="Client name" required maxLength={255} value={name} onChange={(e) => setName(e.target.value)} error={errors.name?.join(" ")} />
+-          <div><label htmlFor="client-type" className="block text-sm font-medium">Client type</label><select id="client-type" value={confidential ? "confidential" : "public"} onChange={(e) => setConfidential(e.target.value === "confidential")} className="w-full rounded border p-2"><option value="public">Public</option><option value="confidential">Confidential</option></select></div>
+-          <div><label htmlFor="redirect-uris" className="block text-sm font-medium">Redirect URIs</label><p id="uris-help" className="text-sm text-slate-500">Enter one complete URI per line. The server validates allowed URIs.</p><textarea id="redirect-uris" required value={uris} onChange={(e) => setUris(e.target.value)} aria-invalid={Object.keys(errors).some((key) => key.startsWith("redirect_uris"))} aria-describedby="uris-help uris-errors" className="min-h-28 w-full rounded border p-2" /><div id="uris-errors" className="text-sm text-red-600">{Object.entries(errors).filter(([key]) => key.startsWith("redirect_uris")).flatMap(([key, values]) => values.map((message, index) => <p key={`${key}-${index}`}>{message}</p>))}</div></div>
+-          <p className="text-sm text-slate-500">Grant types and OAuth security requirements are assigned by the server.</p>
++          <FormField name="oauth-name" label="Client name" disabled={review} required maxLength={255} value={name} onChange={(e) => setName(e.target.value)} error={errors.name?.join(" ")} />
++          <div><label htmlFor="client-type" className="block text-sm font-medium">Client type</label><select id="client-type" disabled={review} value={confidential ? "confidential" : "public"} onChange={(e) => setConfidential(e.target.value === "confidential")} className="w-full rounded border p-2"><option value="public">Public</option><option value="confidential">Confidential</option></select></div>
++          <p className="text-sm text-slate-600">Public clients cannot safely store a credential (for example browsers). Confidential clients can securely store a credential on a server, such as a Laravel application.</p><div><label htmlFor="redirect-uris" className="block text-sm font-medium">Redirect URIs</label><p id="uris-help" className="text-sm text-slate-500">Enter one exact URI per line. Values are sent unchanged. No wildcards or fragments. Production callbacks require HTTPS. The current backend accepts HTTP; use it only for local development.</p><textarea id="redirect-uris" disabled={review} required value={uris} onChange={(e) => setUris(e.target.value)} aria-invalid={Object.keys(errors).some((key) => key.startsWith("redirect_uris"))} aria-describedby="uris-help uris-errors" className="min-h-28 w-full rounded border p-2" /><div id="uris-errors" className="text-sm text-red-600">{Object.entries(errors).filter(([key]) => key.startsWith("redirect_uris")).flatMap(([key, values]) => values.map((message, index) => <p key={`${key}-${index}`}>{message}</p>))}</div></div>
++          <p className="text-sm text-slate-500">Authorization code uses mandatory PKCE: Required, method S256. Grant types and allowed scopes are assigned by the server.</p>
+           {Object.entries(errors).filter(([key]) => key !== "name" && !key.startsWith("redirect_uris")).flatMap(([key, values]) => values.map((message, index) => <p className="text-sm text-red-600" key={`${key}-${index}`}>{message}</p>))}
+-          <div className="flex gap-3"><Button type="submit" isLoading={busy}>Register client</Button><Button type="button" variant="secondary" onClick={onClose}>Cancel</Button></div>
++          <div className="flex gap-3"><Button type="submit" isLoading={busy}>{review ? "Create client" : "Register client"}</Button><Button type="button" variant="secondary" onClick={onClose}>Cancel</Button></div>
+         </fieldset>
+       </form>}
+     </div>
+diff --git a/frontend/src/components/auth/AuthProvider.tsx b/frontend/src/components/auth/AuthProvider.tsx
+index e6d943f..cc473e6 100644
+--- a/frontend/src/components/auth/AuthProvider.tsx
++++ b/frontend/src/components/auth/AuthProvider.tsx
+@@ -1,7 +1,7 @@
+ "use client";
+ 
+ import { AxiosError } from "axios";
+-import { useCallback, useEffect, useMemo, useState } from "react";
++import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+ 
+ import { AuthContext } from "@/hooks/useAuth";
+ import { apiClient, getApiErrorMessage } from "@/services/api-client";
+@@ -14,6 +14,8 @@ export function AuthProvider({
+   const [user, setUser] = useState<AuthUser | null>(null);
+   const [isLoading, setIsLoading] = useState(true);
+   const [error, setError] = useState<string | null>(null);
++  const authenticated = useRef(false);
++  useLayoutEffect(() => { authenticated.current = user !== null; }, [user]);
+ 
+   useEffect(() => {
+     const interceptor = apiClient.interceptors.response.use(
+@@ -26,7 +28,7 @@ export function AuthProvider({
+             requestError.response?.data?.message === "Your account is not active.";
+           if (status === 401 || inactiveAccount) {
+             setUser(null);
+-            if (user) {
++            if (authenticated.current) {
+               setError(inactiveAccount
+                 ? "Your account is not active."
+                 : "Your session has expired. Please log in again.");
+@@ -38,7 +40,7 @@ export function AuthProvider({
+     );
+ 
+     return () => apiClient.interceptors.response.eject(interceptor);
+-  }, [user]);
++  }, []);
+ 
+   const refresh = useCallback(async (): Promise<void> => {
+     setIsLoading(true);
+diff --git a/frontend/src/services/api-client.ts b/frontend/src/services/api-client.ts
+index 921bdb2..f754b1b 100644
+--- a/frontend/src/services/api-client.ts
++++ b/frontend/src/services/api-client.ts
+@@ -13,6 +13,13 @@ export const apiClient = axios.create({
+ 
+ export function getApiErrorMessage(error: unknown): string {
+   if (error instanceof AxiosError) {
++    const status = error.response?.status;
++    if (status === 401) return "Your session has expired. Sign in again.";
++    if (status === 403) return "You are not authorized to perform this administrator action.";
++    if (status === 404) return "The requested user, application, or client no longer exists.";
++    if (status === 409) return "The configuration changed or is no longer editable. Close and reopen this view before trying again.";
++    if (status === 429) return "Too many requests. Wait a moment before trying again.";
++    if (status && status >= 500) return "The identity service could not complete the request. Try again later.";
+     const response = error.response?.data as
+       Partial<ValidationErrorResponse> | undefined;
+     const firstValidationError = response?.errors
+@@ -21,7 +28,6 @@ export function getApiErrorMessage(error: unknown): string {
+ 
+     return (
+       firstValidationError ??
+-      response?.message ??
+       "The request could not be completed."
+     );
+   }
+diff --git a/frontend/src/services/applications.service.ts b/frontend/src/services/applications.service.ts
+index 1b3dc02..b74ee43 100644
+--- a/frontend/src/services/applications.service.ts
++++ b/frontend/src/services/applications.service.ts
+@@ -6,6 +6,10 @@ import type { OAuthClient, OAuthClientCreation, OAuthClientInput } from "@/types
+ export interface ApplicationInput { name: string; slug: string; description?: string | null }
+ 
+ export const applicationsService = {
++  async updateOAuthRedirects(application: string, client: string, redirect_uris: string[], updated_at: string | null): Promise<OAuthClient> {
++    const response = await apiClient.patch<ApiResponse<OAuthClient>>(`/api/admin/applications/${application}/oauth-clients/${client}/redirect-uris`, { redirect_uris, updated_at });
++    return response.data.data;
++  },
+   async oauthClients(application: string, page = 1, perPage = 25): Promise<PaginatedResponse<OAuthClient>> {
+     const response = await apiClient.get<PaginatedResponse<OAuthClient>>(`/api/admin/applications/${application}/oauth-clients`, { params: { page: Math.max(1, Math.floor(page)), per_page: Math.min(100, Math.max(1, Math.floor(perPage))) } });
+     return response.data;
+diff --git a/frontend/src/types/oauth-client.ts b/frontend/src/types/oauth-client.ts
+index ab3a40e..2593ecd 100644
+--- a/frontend/src/types/oauth-client.ts
++++ b/frontend/src/types/oauth-client.ts
+@@ -9,6 +9,11 @@ export interface OAuthClient {
+   grant_types: string[];
+   created_at: string | null;
+   updated_at: string | null;
++  pkce_required?: boolean;
++  pkce_method?: string | null;
++  allowed_scopes?: string[];
++  issuer?: string;
++  discovery_url?: string;
+ }
+ 
+ export interface OAuthClientInput {
+diff --git a/frontend/tests/e2e/application-user-access.spec.ts b/frontend/tests/e2e/application-user-access.spec.ts
+index 0fc275d..a069046 100644
+--- a/frontend/tests/e2e/application-user-access.spec.ts
++++ b/frontend/tests/e2e/application-user-access.spec.ts
+@@ -75,7 +75,7 @@ test("assigned but ineffective access retains the assignment and exact backend r
+   await expect(row.getByText("No — Not effective")).toBeVisible(); await expect(row.getByText("user_suspended")).toBeVisible(); await expect(row.getByRole("button", { name: "Revoke access" })).toBeEnabled();
+ });
+ test("application assignment API failure stays visible until Retry succeeds", async ({ page }) => {
+-  const api = await fixtures(page, true, true); await open(page); await expect(page.getByRole("main").getByRole("alert")).toHaveText("User access unavailable.");
++  const api = await fixtures(page, true, true); await open(page); await expect(page.getByRole("main").getByRole("alert")).toHaveText("The identity service could not complete the request. Try again later.");
+   api.recover(); await page.getByRole("button", { name: "Retry", exact: true }).click(); await expect(page.getByRole("cell", { name: "Person 00", exact: true })).toBeVisible();
+ });
+ test("switching applications replaces assigned users", async ({ page }) => {
+@@ -96,3 +96,12 @@ test("global Application Access remains a separate functional view", async ({ pa
+   await expect(page.getByLabel("User", { exact: true })).toBeVisible(); await expect(page.getByRole("checkbox")).toBeChecked();
+   await expect(page.getByText("effective access", { exact: true })).toBeVisible();
+ });
++
++ test("inactive identity is visible but cannot receive an application grant", async ({ page }) => {
++  const api = await fixtures(page); await open(page); await openPicker(page);
++  await page.getByLabel("Search users to grant access").fill("Suspended person");
++  await page.getByLabel("User", { exact: true }).selectOption(suspended.id);
++  await expect(page.getByText("Selected user: Suspended person")).toBeVisible();
++  await expect(page.getByRole("button", { name: "Grant assignment" })).toBeDisabled();
++  expect(api.requests.some((request) => request.method === "POST")).toBe(false);
++});
+diff --git a/frontend/tests/e2e/oauth-clients.spec.ts b/frontend/tests/e2e/oauth-clients.spec.ts
+index 4a6e75c..bf138ad 100644
+--- a/frontend/tests/e2e/oauth-clients.spec.ts
++++ b/frontend/tests/e2e/oauth-clients.spec.ts
+@@ -5,7 +5,7 @@ const other = "33333333-3333-4333-8333-333333333333";
+ const clientId = "22222222-2222-4222-8222-222222222222";
+ const secret = "mock-only-one-time-secret";
+ async function fixtures(page: Page, admin = true, fail = false) {
+-  let clients = [{ id: clientId, application_id: app, name: "CRM OAuth", confidential: false, revoked: false, redirect_uris: ["https://example.test/callback"], grant_types: ["authorization_code", "refresh_token"], created_at: "2026-01-02T00:00:00Z", updated_at: "2026-02-03T00:00:00Z" }];
++  let clients = [{ id: clientId, application_id: app, name: "CRM OAuth", confidential: false, revoked: false, redirect_uris: ["https://example.test/callback"], grant_types: ["authorization_code", "refresh_token"], pkce_required: true, pkce_method: "S256", allowed_scopes: ["iam:read", "openid", "profile", "email"], issuer: "https://iam.example.test", discovery_url: "https://iam.example.test/.well-known/openid-configuration", created_at: "2026-01-02T00:00:00Z", updated_at: "2026-02-03T00:00:00Z" }];
+   const mutations: { path: string; body: unknown }[] = [];
+   await page.route("**/api/**", async (route) => {
+     const request = route.request(); const url = new URL(request.url()); const path = url.pathname;
+@@ -15,6 +15,12 @@ async function fixtures(page: Page, admin = true, fail = false) {
+     if (path === "/api/me") return respond({ data: { id: "admin", name: "Admin", email: "admin@example.test", status: "active", is_system_admin: admin } });
+     if (path === `/api/admin/applications/${app}` || path === `/api/admin/applications/${other}`) return respond({ data: { id: path.endsWith(other) ? other : app, name: path.endsWith(other) ? "ERP" : "CRM", slug: "crm", description: "Application", status: "active", created_at: null, updated_at: null } });
+     const root = `/api/admin/applications/${app}/oauth-clients`;
++    if (path === `/api/admin/applications/${app}/history`) return respond({ data: [{ id: 1, action: "application.access_granted", actor_id: "admin", subject_id: "user", client_id: null, created_at: "2026-10-07T00:00:00Z" }], last_page: 1 });
++    if (path === `${root}/${clientId}/redirect-uris` && request.method() === "PATCH") {
++      const input = request.postDataJSON(); mutations.push({ path, body: input });
++      clients = clients.map((client) => client.id === clientId ? { ...client, redirect_uris: input.redirect_uris, updated_at: "2026-10-07T00:00:00Z" } : client);
++      return respond({ data: clients[0] });
++    }
+     if (path === root && request.method() === "GET") {
+       if (fail) return respond({ message: "Clients unavailable." }, 503);
+       return respond({ data: clients, meta: { current_page: 1, last_page: 1, per_page: 25, total: clients.length } });
+@@ -42,7 +48,7 @@ test("admin opens the OAuth tab and inspects safe client details", async ({ page
+   await expect(page.getByText("CRM OAuth", { exact: true })).toBeVisible();
+   await expect(page.getByText(clientId, { exact: true })).toBeVisible();
+   await page.getByRole("button", { name: "View details" }).click();
+-  await expect(page.getByRole("dialog").getByText("https://example.test/callback")).toBeVisible();
++  await expect(page.getByRole("dialog").getByText("https://example.test/callback").first()).toBeVisible();
+ });
+ test("confidential registration shows a one-time secret, copies and discards it", async ({ page }) => {
+   const { mutations } = await fixtures(page);
+@@ -51,6 +57,7 @@ test("confidential registration shows a one-time secret, copies and discards it"
+   await page.getByRole("button", { name: "Register OAuth Client" }).click();
+   await page.getByLabel("Client name").fill("Production client"); await page.getByLabel("Client type").selectOption("confidential"); await page.getByLabel("Redirect URIs").fill("https://example.test/production");
+   await page.getByRole("button", { name: "Register client", exact: true }).click();
++  await page.getByRole("button", { name: "Create client", exact: true }).click();
+   await expect(page.getByText(secret, { exact: true })).toBeVisible();
+   expect(mutations[0].body).toEqual({ name: "Production client", confidential: true, redirect_uris: ["https://example.test/production"] });
+   await page.getByRole("button", { name: "Copy secret" }).click(); await expect(page.getByText("Copied.")).toBeVisible();
+@@ -67,7 +74,7 @@ test("revocation requires confirmation and refreshes revoked state", async ({ pa
+ });
+ test("OAuth API failures remain visible and Retry loads clients", async ({ page }) => {
+   const api = await fixtures(page, true, true); await page.goto(`/applications/${app}/oauth-clients`);
+-  await expect(page.getByRole("main").getByRole("alert")).toHaveText("Clients unavailable.", { timeout: 15_000 }); api.recover(); await page.getByRole("button", { name: "Retry" }).click(); await expect(page.getByText("CRM OAuth")).toBeVisible();
++  await expect(page.getByRole("main").getByRole("alert")).toHaveText("The identity service could not complete the request. Try again later.", { timeout: 15_000 }); api.recover(); await page.getByRole("button", { name: "Retry" }).click(); await expect(page.getByText("CRM OAuth")).toBeVisible();
+ });
+ test("non-admin cannot mount the OAuth management route", async ({ page }) => {
+   await fixtures(page, false); await page.goto(`/applications/${app}/oauth-clients`);
+@@ -78,3 +85,21 @@ test("tab history and application switching preserve correct context", async ({
+   await page.getByRole("link", { name: "Settings", exact: true }).click(); await expect(page.getByLabel("Name")).toBeVisible(); await page.goBack(); await expect(page.getByText("CRM OAuth")).toBeVisible(); await page.goForward(); await expect(page.getByLabel("Name")).toBeVisible();
+   await page.goto(`/applications/${other}/oauth-clients`); await expect(page.getByText("ERP OAuth")).toBeVisible(); await expect(page.getByText("CRM OAuth")).toHaveCount(0);
+ });
++
++test("admin manages exact callbacks and reviews integration and real audit history", async ({ page }) => {
++  const { mutations } = await fixtures(page); await page.goto(`/applications/${app}/oauth-clients`);
++  await page.getByRole("button", { name: "View details" }).click();
++  const dialog = page.getByRole("dialog");
++  await expect(dialog.getByText("Required; method S256")).toBeVisible();
++  await dialog.getByRole("button", { name: "Add URI", exact: true }).click();
++  await dialog.getByLabel("Redirect URI 2", { exact: true }).fill("https://example.test/Callback?Case=Value%2F");
++  await dialog.getByRole("button", { name: "Remove URI 1" }).click();
++  await dialog.getByRole("button", { name: "Save redirect URIs" }).click();
++  await expect(dialog.getByText("Redirect URIs saved.")).toBeVisible();
++  expect(mutations[0].body).toEqual({ redirect_uris: ["https://example.test/Callback?Case=Value%2F"], updated_at: "2026-02-03T00:00:00Z" });
++  await expect(dialog.getByText("https://iam.example.test", { exact: true })).toBeVisible();
++  await expect(dialog.getByRole("link", { name: "Manage application access" })).toHaveAttribute("href", `/applications/${app}/user-access`);
++  await dialog.getByRole("button", { name: "Close", exact: true }).click();
++  await page.getByRole("button", { name: "Administrative history" }).click();
++  await expect(page.getByText("application.access_granted", { exact: true })).toBeVisible();
++});
+diff --git a/frontend/tests/unit/application-user-access.test.tsx b/frontend/tests/unit/application-user-access.test.tsx
+index 81e3a26..e788a4e 100644
+--- a/frontend/tests/unit/application-user-access.test.tsx
++++ b/frontend/tests/unit/application-user-access.test.tsx
+@@ -22,7 +22,7 @@ beforeEach(() => {
+   vi.resetAllMocks(); auth.user = { is_system_admin: true }; auth.isLoading = false;
+   http.get.mockImplementation((path: string) => {
+     if (path === "/api/admin/users") return Promise.resolve(response(page([user, second])));
+-    if (path.startsWith("/api/admin/users/")) return Promise.resolve(response({ data: path.endsWith(second.id) ? second : user }));
++    if (path.startsWith("/api/admin/users/")) return Promise.resolve(response({ data: path.endsWith(second.id) ? { ...second, status: "active" } : user }));
+     if (path.endsWith("/users")) return Promise.resolve(response(page()));
+     return Promise.resolve(response({ data: app }));
+   });
+@@ -41,6 +41,16 @@ async function select(id = second.id) {
+   await screen.findByText(`Selected user: ${id === second.id ? second.name : user.name}`);
+ }
+ const grant = () => fireEvent.click(screen.getByRole("button", { name: "Grant assignment" }));
++it("prevents granting access to a suspended identity", async () => {
++  http.get.mockImplementation((path: string) => {
++    if (path === "/api/admin/users") return Promise.resolve(response(page([second])));
++    if (path.startsWith("/api/admin/users/")) return Promise.resolve(response({ data: second }));
++    return Promise.resolve(response(page()));
++  });
++  renderAccess(); await screen.findByText(user.email); await select();
++  expect(screen.getByRole("button", { name: "Grant assignment" })).toBeDisabled();
++  grant(); expect(http.post).not.toHaveBeenCalled();
++});
+ const confirmRevoke = () => fireEvent.click(screen.getByRole("button", { name: "Revoke assignment" }));
+ function validation(messages = ["The user already has access to this application."]) {
+   const error = new AxiosError("validation");
+@@ -73,7 +83,7 @@ it("shows failures independently and retries the current application and page",
+   http.get.mockRejectedValueOnce(new Error("failed")).mockResolvedValue(response(page())); renderAccess(); await screen.findByRole("alert");
+   expect(screen.queryByText("No users currently have an assignment for this application.")).not.toBeInTheDocument();
+   fireEvent.click(screen.getByRole("button", { name: "Retry" })); await screen.findByText(user.email);
+-  expect(http.get).toHaveBeenLastCalledWith("/api/admin/applications/app/users", { params: { page: 1, per_page: 25 } });
++  await waitFor(() => expect(http.get).toHaveBeenLastCalledWith("/api/admin/applications/app/users", { params: { page: 1, per_page: 25 } }));
+ });
+ it("paginates in the current application and displays loading", async () => {
+   http.get.mockImplementation((_path, options) => Promise.resolve(response(page([user], options.params.page, 2)))); renderAccess(); await screen.findByText(user.email);
+@@ -94,7 +104,7 @@ it("opens the picker, keeps the application fixed and grants only after an autho
+   http.get.mockImplementation((path: string) => Promise.resolve(response(path.endsWith("/users") ? page([second]) : { data: second })));
+   grant(); await screen.findByText(`Assignment granted for Sara (${second.email}) to CRM.`);
+   expect(http.post).toHaveBeenCalledWith("/api/admin/users/user-2/applications", { application_id: "app" });
+-  expect(http.get).toHaveBeenLastCalledWith("/api/admin/applications/app/users", { params: { page: 1, per_page: 25 } });
++  await waitFor(() => expect(http.get).toHaveBeenLastCalledWith("/api/admin/applications/app/users", { params: { page: 1, per_page: 25 } }));
+   expect(await screen.findByText("user_suspended")).toBeInTheDocument(); expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+ });
+ it("does not assume a selected user absent from the current list page is unassigned", async () => {
+@@ -188,7 +198,7 @@ it("keeps the current page after revoke and falls back when the page no longer e
+   http.delete.mockImplementation(() => { deleted = true; return Promise.resolve({ status: 204 }); });
+   renderAccess(); await screen.findByText(user.email); fireEvent.click(screen.getByRole("button", { name: "Next" })); await screen.findByText("Page 2 of 2");
+   fireEvent.click(screen.getByRole("button", { name: "Revoke access" })); confirmRevoke(); await screen.findByText("No users currently have an assignment for this application.");
+-  expect(http.get).toHaveBeenLastCalledWith("/api/admin/applications/app/users", { params: { page: 1, per_page: 25 } });
++  await waitFor(() => expect(http.get).toHaveBeenLastCalledWith("/api/admin/applications/app/users", { params: { page: 1, per_page: 25 } }));
+ });
+ it("a revoke completed after page navigation refreshes the latest selected page", async () => {
+   let resolve!: (value: unknown) => void;
+diff --git a/frontend/tests/unit/oauth-clients.test.tsx b/frontend/tests/unit/oauth-clients.test.tsx
+index 4a662d7..f7d74f1 100644
+--- a/frontend/tests/unit/oauth-clients.test.tsx
++++ b/frontend/tests/unit/oauth-clients.test.tsx
+@@ -27,7 +27,16 @@ async function openForm(confidential = true) {
+   fireEvent.change(screen.getByLabelText("Redirect URIs"), { target: { value: "https://example.test/callback\ncustom://callback" } });
+   fireEvent.change(screen.getByLabelText("Client type"), { target: { value: confidential ? "confidential" : "public" } });
+ }
+-const submit = () => fireEvent.click(screen.getByRole("button", { name: "Register client" }));
++const submit = () => { fireEvent.click(screen.getByRole("button", { name: "Register client" })); const confirm = screen.queryByRole("button", { name: "Create client" }); if (confirm) fireEvent.click(confirm); };
++it("requires review before creating and preserves exact redirect values", async () => {
++  render(<ApplicationOAuthClients applicationId="app" />); await openForm();
++  fireEvent.change(screen.getByLabelText("Redirect URIs"), { target: { value: " https://example.test/Callback?Case=Value%2F " } });
++  fireEvent.click(screen.getByRole("button", { name: "Register client" }));
++  expect(screen.getByRole("region", { name: "Review OAuth configuration" })).toHaveTextContent("S256");
++  expect(service.createOAuthClient).not.toHaveBeenCalled();
++  fireEvent.click(screen.getByRole("button", { name: "Create client" }));
++  await waitFor(() => expect(service.createOAuthClient).toHaveBeenCalledWith("app", { name: "New client", confidential: true, redirect_uris: [" https://example.test/Callback?Case=Value%2F "] }));
++});
+ 
+ it("loads all safe client metadata, complete URIs and server grants without credentials", async () => {
+   service.oauthClients.mockResolvedValue(page([{ ...client, secret: "hidden-hash", client_secret: secret } as OAuthClient]));
+diff --git a/backend/app/Http/Controllers/Applications/ApplicationAuditController.php b/backend/app/Http/Controllers/Applications/ApplicationAuditController.php
+new file mode 100644
+index 0000000..c8ae750
+--- /dev/null
++++ b/backend/app/Http/Controllers/Applications/ApplicationAuditController.php
+@@ -0,0 +1,31 @@
++<?php
++
++namespace App\Http\Controllers\Applications;
++
++use App\Http\Controllers\Controller;
++use App\Models\Application;
++use App\Models\AuditLog;
++use Illuminate\Http\JsonResponse;
++use Illuminate\Http\Request;
++
++class ApplicationAuditController extends Controller
++{
++    public function __invoke(Request $request, Application $application): JsonResponse
++    {
++        $this->authorize('view', $application);
++        $request->validate(['page' => ['sometimes', 'integer', 'min:1']]);
++        $events = AuditLog::query()->where(function ($query) use ($application): void {
++            $query->where(function ($query) use ($application): void {
++                $query->where('subject_type', 'application')->where('subject_id', $application->public_id);
++            })->orWhere('metadata->application_id', $application->public_id);
++        })->orderByDesc('created_at')->orderByDesc('id')->paginate(25);
++        $events->setCollection($events->getCollection()->map(fn (AuditLog $event): array => [
++            'id' => $event->id, 'action' => $event->action,
++            'actor_id' => $event->actor_public_id, 'subject_id' => $event->subject_id,
++            'client_id' => $event->metadata['client_id'] ?? null,
++            'created_at' => $event->created_at->toISOString(),
++        ]));
++
++        return response()->json($events);
++    }
++}
+diff --git a/backend/app/Http/Requests/Applications/UpdateOAuthRedirectsRequest.php b/backend/app/Http/Requests/Applications/UpdateOAuthRedirectsRequest.php
+new file mode 100644
+index 0000000..cc5abfb
+--- /dev/null
++++ b/backend/app/Http/Requests/Applications/UpdateOAuthRedirectsRequest.php
+@@ -0,0 +1,13 @@
++<?php
++
++namespace App\Http\Requests\Applications;
++
++class UpdateOAuthRedirectsRequest extends StoreOAuthClientRequest
++{
++    public function rules(): array
++    {
++        return array_intersect_key(parent::rules(), array_flip(['redirect_uris', 'redirect_uris.*'])) + [
++            'updated_at' => ['required', 'date'],
++        ];
++    }
++}
+diff --git a/backend/tests/Feature/Applications/OAuthOnboardingTest.php b/backend/tests/Feature/Applications/OAuthOnboardingTest.php
+new file mode 100644
+index 0000000..c6cadc7
+--- /dev/null
++++ b/backend/tests/Feature/Applications/OAuthOnboardingTest.php
+@@ -0,0 +1,56 @@
++<?php
++
++namespace Tests\Feature\Applications;
++
++use App\Models\Application;
++use App\Models\User;
++use App\Services\OAuthClientService;
++use Illuminate\Foundation\Testing\RefreshDatabase;
++use Illuminate\Support\Str;
++use Tests\TestCase;
++
++class OAuthOnboardingTest extends TestCase
++{
++    use RefreshDatabase;
++
++    public function test_redirect_updates_are_exact_scoped_authorized_and_conflict_checked(): void
++    {
++        $admin = User::factory()->systemAdmin()->create();
++        $app = Application::factory()->create();
++        $other = Application::factory()->create();
++        $client = app(OAuthClientService::class)->create($app, ['name' => 'Server', 'confidential' => true, 'redirect_uris' => ['https://example.test/callback']]);
++        $url = '/api/admin/applications/'.$app->public_id.'/oauth-clients/'.$client->id.'/redirect-uris';
++        $payload = ['redirect_uris' => ['https://example.test/callback?Case=Value%2F'], 'updated_at' => $client->updated_at->toISOString()];
++        $this->patchJson($url, $payload)->assertUnauthorized();
++        $this->actingAs(User::factory()->create())->patchJson($url, $payload)->assertForbidden();
++        $this->actingAs($admin)->patchJson(str_replace($app->public_id, $other->public_id, $url), $payload)->assertNotFound();
++        foreach ([['https://example.test/*'], ['https://example.test/callback#fragment'], ['https://example.test/callback', 'https://example.test/callback'], [' https://example.test/callback'], ['invalid']] as $uris) {
++            $this->patchJson($url, ['redirect_uris' => $uris, 'updated_at' => $payload['updated_at']])->assertUnprocessable();
++        }
++        $saved = $this->patchJson($url, $payload)->assertOk()->assertJsonPath('data.redirect_uris', $payload['redirect_uris'])->assertJsonPath('data.pkce_required', true)->assertJsonPath('data.pkce_method', 'S256')->assertJsonMissingPath('data.secret')->assertJsonMissingPath('client_secret');
++        $this->patchJson($url, $payload)->assertConflict();
++        $this->patchJson($url, ['redirect_uris' => ['https://example.test/next'], 'updated_at' => $saved->json('data.updated_at')])->assertOk();
++        $client->refresh();
++        $client->update(['revoked' => true]);
++        $this->patchJson($url, ['redirect_uris' => $payload['redirect_uris'], 'updated_at' => $client->updated_at->toISOString()])->assertConflict();
++        $history = '/api/admin/applications/'.$app->public_id.'/history';
++        $this->getJson($history)->assertOk()->assertJsonFragment(['action' => 'oauth_client.redirects_updated']);
++        $this->actingAs(User::factory()->create())->getJson($history)->assertForbidden();
++    }
++
++    public function test_inactive_suspended_deleted_and_nonexistent_users_cannot_receive_access(): void
++    {
++        $admin = User::factory()->systemAdmin()->create();
++        $app = Application::factory()->create();
++        $this->actingAs($admin);
++        foreach (['inactive', 'suspended'] as $status) {
++            $user = User::factory()->create(['status' => $status]);
++            $this->postJson('/api/admin/users/'.$user->public_id.'/applications', ['application_id' => $app->public_id])->assertUnprocessable()->assertJsonValidationErrors('user');
++        }
++        $user = User::factory()->create();
++        $user->delete();
++        foreach ([$user->public_id, (string) Str::uuid()] as $id) {
++            $this->postJson('/api/admin/users/'.$id.'/applications', ['application_id' => $app->public_id])->assertNotFound();
++        }
++    }
++}
+diff --git a/docs/iam-onboarding-report.md b/docs/iam-onboarding-report.md
+new file mode 100644
+index 0000000..48ab3e0
+--- /dev/null
++++ b/docs/iam-onboarding-report.md
+@@ -0,0 +1,111 @@
++# IAM onboarding and application access milestone
++
++Implemented in the IAM only. No commit or push. Laravel SDK, HRM, OAuth authorization/token endpoints, signing, refresh-token database logic, and SDK contracts were not modified. The pre-existing untracked documents were preserved.
++
++## 1. Existing backend capabilities reused
++
++Application public IDs, status and policies; Passport OAuth client creation, hashed credentials and one-time plainSecret; application-scoped list/detail reads; Passport revocation of clients and their existing credentials; exact redirect matching; mandatory S256 authorization-code PKCE; OIDC issuer and discovery configuration; Passport scopes; central IAM administrator middleware; Doxa user directory/profile reads; application-access grant/detach and authoritative effective-access resources; transactional IAM AuditService/AuditLog.
++
++## 2. Frontend audit and components
++
++| Area | Existing implementation | Result |
++| --- | --- | --- |
++| Applications | ApplicationsAdmin, ApplicationsList, new/details/settings routes | Reused |
++| Application details | ApplicationDetails, ApplicationTabs, ApplicationOverview, ApplicationSettings | Adds expandable administrative history |
++| OAuth clients | ApplicationOAuthClients list under each application | Existing pagination, create/detail/revoke retained |
++| OAuth creation | OAuthClientForm modal | Exact values, type guidance, review before create, one-time credentials and integration |
++| OAuth details | OAuthClientDetail/Metadata | PKCE and scopes; redirect editor; integration details |
++| Users | UsersList, UserDetails, UserForm and users.service | Existing searchable Doxa directory reused |
++| Application access | ApplicationUserAccess, ApplicationUserAccessGrant, global ApplicationAccessManager | Explicit selected identity; active-user requirement; stable Doxa ID displayed; effective state retained |
++| API client | Credentialed Axios api-client, applications.service, users.service | Adds redirect update; safe error mapping |
++| Authorization | ProtectedShell is_system_admin check; backend central-iam-admin plus ApplicationPolicy | Reused and revoke policy made explicit |
++| Audit UI | No existing application audit reader/view | ApplicationHistory and scoped backend reader added |
++| Errors | AxiosError validation maps, Alert, inline FormField, retry/loading, pending and stale-request guards | Retained; focused form summaries and indexed redirect errors added; raw server messages suppressed; stable authentication interceptor prevents session-expiry closure races |
++
++New components: OAuthClientIntegration, OAuthRedirectEditor (both in OAuthClientIntegration.tsx), ApplicationHistory. All use the existing Button, Alert and modal/layout conventions. No new top-level pages or design system were introduced.
++
++## 3. Required API additions
++
++- PATCH /api/admin/applications/{application}/oauth-clients/{client}/redirect-uris: exact redirect array plus current updated_at; scoped lookup; update authorization; row locks; revoked/inactive protection; 409 for stale edits. The lock order matches issuance. Second-precision monotonic timestamps avoid a lost update when edits happen within the same second.
++- GET /api/admin/applications/{application}/history: centrally authorized, application-scoped, validated pagination (25 per page), deterministic order. Output allowlists action, time, actor/subject public IDs and non-secret client ID; excludes raw metadata, IP addresses, user agents and internal IDs.
++
++Existing OAuth metadata gains issuer, discovery_url, allowed_scopes, pkce_required and pkce_method. Creation returns Cache-Control: no-store. No secret read/rotation/restore endpoint was added.
++
++## 4. OAuth onboarding
++
++Applications -> select application -> OAuth Clients -> Register OAuth Client -> name, type and exact redirect URIs -> review configuration -> Create client -> one-time credential warning/copy -> developer integration -> Manage application access. Public/confidential selection is explicit. Server-side Laravel applications are explained as suitable confidential clients when credentials can be stored securely. Existing clients are never converted.
++
++## 5. Redirect URI UX
++
++Creation uses one exact value per line, without trimming or URL normalization. Detail editing offers labeled individual URI fields, Add URI, Remove URI, Save, duplicate detection, indexed server validation and conflict recovery guidance. Backend management rejects duplicates, wildcards, fragments and surrounding whitespace. Laravel TrimStrings excludes redirect_uris.* so validation receives exact values. Authorization exact-match behavior was not changed. At least one URI remains required. Revoked clients cannot edit. Production HTTPS guidance explains the existing broader HTTP acceptance.
++
++## 6. Integration view
++
++Copies issuer, discovery URL, client ID, each exact redirect URI and a non-secret server-side environment example. Shows client type, grant, mandatory S256, available scopes, openid dependency and nonce guidance. The example uses the current Laravel SDK's real DOXA_ISSUER, DOXA_CLIENT_ID, DOXA_REDIRECT_URI and a placeholder DOXA_CLIENT_SECRET; discovery/grant/scopes are explanatory comments rather than invented SDK environment settings. No actual secret is interpolated. SDK config was read only. Tokens and signing keys are never rendered. Secret remains only in the existing creation component memory and is discarded when that view unmounts.
++
++## 7. Application access and identity linking
++
++Search the Doxa directory, explicitly select and re-fetch an existing user by stable public ID, inspect name/email/account status/Doxa ID, then grant access to the fixed application context. Inactive/suspended users are blocked in UI and service; deleted/nonexistent users are rejected. Duplicate grants retain existing backend rejection. Revoke detaches only the application assignment. Assignment existence/status and backend effective_access/ineffective_reason are separate. Effective access requires active user + active application + active assignment. No email linking, email normalization, provisioning, HRM user creation or IAM-to-business-role mapping is introduced.
++
++## 8. Audit visibility
++
++Application history reads stored events with refresh/retry/pagination. Existing access_granted/access_revoked events are exposed. Client creation, redirect changes and revocation now record genuine transactional AuditService events with only a non-secret client identifier (and changed field name for redirects). Historical missing client events are not fabricated or backfilled. Restore and rotation have no support/history to expose.
++
++## 9. Exact changed files
++
++- `backend/app/Http/Controllers/Applications/ApplicationAuditController.php`
++- `backend/app/Http/Controllers/Applications/OAuthClientController.php`
++- `backend/app/Http/Requests/Applications/StoreOAuthClientRequest.php`
++- `backend/app/Http/Requests/Applications/UpdateOAuthRedirectsRequest.php`
++- `backend/app/Http/Resources/OAuthClientResource.php`
++- `backend/app/Services/ApplicationAccessService.php`
++- `backend/app/Services/AuditService.php`
++- `backend/app/Services/OAuthClientService.php`
++- `backend/bootstrap/app.php`
++- `backend/routes/api.php`
++- `backend/tests/Feature/Applications/OAuthClientReadTest.php`
++- `backend/tests/Feature/Applications/OAuthOnboardingTest.php`
++- `docs/iam-onboarding-report.md`
++- `frontend/src/components/admin/applications/ApplicationDetails.tsx`
++- `frontend/src/components/admin/applications/ApplicationHistory.tsx`
++- `frontend/src/components/admin/applications/ApplicationUserAccessGrant.tsx`
++- `frontend/src/components/admin/applications/OAuthClientDetail.tsx`
++- `frontend/src/components/admin/applications/OAuthClientForm.tsx`
++- `frontend/src/components/admin/applications/OAuthClientIntegration.tsx`
++- `frontend/src/components/auth/AuthProvider.tsx`
++- `frontend/src/services/api-client.ts`
++- `frontend/src/services/applications.service.ts`
++- `frontend/src/types/oauth-client.ts`
++- `frontend/tests/e2e/application-user-access.spec.ts`
++- `frontend/tests/e2e/oauth-clients.spec.ts`
++- `frontend/tests/unit/application-history.test.tsx`
++- `frontend/tests/unit/application-user-access.test.tsx`
++- `frontend/tests/unit/oauth-clients.test.tsx`
++- `frontend/tests/unit/oauth-onboarding.test.tsx`
++
++## 10. Verification
++
++- Full SQLite IAM suite: 392 passed, 5 PostgreSQL-only concurrency cases skipped; 2719 assertions.
++- Full isolated PostgreSQL IAM suite: 397 passed, 2815 assertions, including every concurrency case. TestCase isolates the iam_backend_test schema. Artisan emitted a duplicate-configuration warning, but PostgreSQL execution and all concurrency cases passed; a direct PHPUnit PostgreSQL rerun below confirmed the selected configuration explicitly.
++- Final focused OAuth read/onboarding rerun after the lock/timestamp review and formatting: 16 passed, 131 assertions.
++- Final direct PostgreSQL onboarding rerun: 2 passed, 28 assertions, including immediate subsequent edits and stale-edit rejection.
++- Frontend: 97 unit tests in 12 files passed, including new integration, exact editing, audit reading/retry, review, inactive identity and safe error cases.
++- Browser: 7 OAuth onboarding tests + 11 application access tests passed on Microsoft Edge.
++- TypeScript --noEmit, ESLint, Laravel Pint --test and git diff --check passed.
++- Production Next.js build passed. The first sandboxed build could not fetch existing Google Fonts; the approved network-enabled retry compiled, typechecked and generated all routes successfully.
++
++Coverage includes existing create/view/revoke and secret absence, exact authorization redirects, PKCE and security suites; new redirect management authorization/cross-application scoping/duplicates/fragments/wildcards/whitespace/conflicts; user lookup/grant/revoke/nonexistent/deleted/inactive/duplicate/unauthorized access; no token/extra-secret rendering; audit authorization and stored event display.
++
++Raw full-suite and browser logs are in ../artifacts/iam-onboarding/. The final focused backend and successful build outputs were also reported in the session.
++
++## 11. Backend gaps
++
++No existing secret rotation or client restore management support; no client expiration field; scopes are global IAM capabilities, with no per-client scope configuration. Access revocation detaches assignment records, so revoked users disappear from the current assignment list and are represented in history. Client audit events from before this change may be absent. Existing HTTP redirect validation is not restricted to localhost and general URL validation does not impose a production HTTPS-only policy. These gaps were not solved by inventing SDK/token/lifecycle behavior.
++
++## 12. Security concerns and boundaries
++
++Production deployments must register HTTPS callbacks; current management validation continues to accept HTTP beyond localhost. Stronger environment-specific redirect scheme/host policy is a separate backend product decision. The UI explicitly explains HTTP as local-development use. All management remains central IAM admin-only; application IDs/client IDs are checked server-side. Public clients retain no secret and all authorization-code clients retain mandatory S256. No stored secret can be recovered through detail/list/history or environment examples. Raw exception messages are not rendered; validation messages come from controlled backend rules. Access semantics are unchanged except the expressly requested rejection of new grants to inactive/suspended accounts. Historical audit gaps are disclosed. No SDK, HRM, refresh, signing or OAuth protocol security was rewritten.
++
++## 13. Complete diff/stat
++
++See ../artifacts/iam-onboarding/complete.diff and diff-stat.txt. These include every modified tracked implementation/test file, all new implementation/tests and this report, without staging anything. They exclude the generated diff/log artifacts themselves and the four pre-existing untracked user documents. Ordinary git diff omits untracked files, so the exported patch also includes each new file explicitly.
+diff --git a/frontend/src/components/admin/applications/ApplicationHistory.tsx b/frontend/src/components/admin/applications/ApplicationHistory.tsx
+new file mode 100644
+index 0000000..1c315e0
+--- /dev/null
++++ b/frontend/src/components/admin/applications/ApplicationHistory.tsx
+@@ -0,0 +1,32 @@
++"use client";
++
++import { useEffect, useState } from "react";
++import { apiClient, getApiErrorMessage } from "@/services/api-client";
++import { Alert } from "@/components/ui/Alert";
++import { Button } from "@/components/ui/Button";
++
++type History = { data: { id: number; action: string; actor_id: string | null; subject_id: string | null; client_id: string | null; created_at: string }[]; last_page: number };
++export function ApplicationHistory({ applicationId }: { applicationId: string }) {
++  const [open, setOpen] = useState(false);
++  const [page, setPage] = useState(1);
++  const [retry, setRetry] = useState(0);
++  const [history, setHistory] = useState<History | null>(null);
++  const [error, setError] = useState("");
++  useEffect(() => {
++    if (!open) return;
++    let cancelled = false;
++    apiClient.get<History>(`/api/admin/applications/${applicationId}/history`, { params: { page } }).then(({ data }) => { if (!cancelled) { setHistory(data); setError(""); } }).catch((e) => { if (!cancelled) setError(getApiErrorMessage(e)); });
++    return () => { cancelled = true; };
++  }, [applicationId, open, page, retry]);
++  return <section className="mt-8 space-y-3 border-t pt-4" aria-label="Administrative history">
++    <Button variant="secondary" aria-expanded={open} onClick={() => { setHistory(null); setOpen(!open); }}>Administrative history</Button>
++    {open ? <>
++      <Button variant="secondary" onClick={() => { setHistory(null); setRetry(retry + 1); }}>Refresh history</Button>
++      <p className="text-sm text-slate-600">Stored IAM audit events. Historical client operations may be missing where auditing was previously unavailable. Client restore and secret rotation are not supported.</p>
++      {error ? <><Alert>{error}</Alert><Button onClick={() => setRetry(retry + 1)}>Retry history</Button></> : history ? <>
++        {!history.data.length ? <p>No recorded events.</p> : <ul className="space-y-2">{history.data.map((event) => <li key={event.id} className="rounded border p-3 text-sm"><p>{event.action}</p>{event.client_id ? <p>Client: {event.client_id}</p> : null}<p>{event.created_at}</p><p>Actor: {event.actor_id ?? "System"}; subject: {event.subject_id ?? "Unavailable"}</p></li>)}</ul>}
++        <div className="flex gap-3"><Button disabled={page <= 1} onClick={() => { setHistory(null); setPage(page - 1); }}>Previous history</Button><span>Page {page}</span><Button disabled={page >= history.last_page} onClick={() => { setHistory(null); setPage(page + 1); }}>Next history</Button></div>
++      </> : <p role="status">Loading history…</p>}
++    </> : null}
++  </section>;
++}
+diff --git a/frontend/src/components/admin/applications/OAuthClientIntegration.tsx b/frontend/src/components/admin/applications/OAuthClientIntegration.tsx
+new file mode 100644
+index 0000000..1c28438
+--- /dev/null
++++ b/frontend/src/components/admin/applications/OAuthClientIntegration.tsx
+@@ -0,0 +1,77 @@
++"use client";
++
++import Link from "next/link";
++import { AxiosError } from "axios";
++import { useEffect, useRef, useState } from "react";
++import { Button } from "@/components/ui/Button";
++import { Alert } from "@/components/ui/Alert";
++import { applicationsService } from "@/services/applications.service";
++import { getApiErrorMessage } from "@/services/api-client";
++import type { OAuthClient } from "@/types/oauth-client";
++
++export function OAuthClientIntegration({ client }: { client: OAuthClient }) {
++  const [status, setStatus] = useState("");
++  async function copy(value: string) {
++    try { await navigator.clipboard.writeText(value); setStatus("Copied."); }
++    catch { setStatus("Unable to copy. Select and copy the value manually."); }
++  }
++  const example = [
++    "# Laravel SDK server-side environment",
++    `DOXA_ISSUER=${JSON.stringify(client.issuer ?? "<issuer>")}`,
++    `# Discovery URL: ${client.discovery_url ?? "<discovery URL>"}`,
++    `DOXA_CLIENT_ID=${JSON.stringify(client.id)}`,
++    `DOXA_REDIRECT_URI=${JSON.stringify(client.redirect_uris[0] ?? "<exact redirect URI>")}`,
++    "# Grant: authorization_code",
++    `# Allowed scopes: ${(client.allowed_scopes ?? []).join(" ")}`,
++    "# Laravel SDK defaults to openid; set scopes in config/doxa.php as needed.",
++    ...(client.confidential ? ["DOXA_CLIENT_SECRET=<credential saved securely at creation>"] : []),
++    "# PKCE is required: S256. Generate a fresh verifier for every authorization.",
++  ].join("\n");
++  return <section aria-label="Developer integration" className="space-y-3 border-t pt-4">
++    <h3 className="font-semibold">Developer integration</h3><Button variant="secondary" onClick={() => void copy(client.id)}>Copy Client ID</Button>
++    {client.revoked ? <Alert>This client is revoked and cannot be used for sign-in.</Alert> : null}
++    {[["Issuer", client.issuer], ["Discovery URL", client.discovery_url], ...client.redirect_uris.map((uri, index) => [`Exact redirect URI ${index + 1}`, uri])].map(([label, value]) => <div key={label} className="space-y-1"><p className="text-sm text-slate-600">{label}</p><code className="block break-all select-all">{value ?? "Unavailable"}</code>{value ? <Button variant="secondary" onClick={() => void copy(value)}>Copy {label}</Button> : null}</div>)}
++    <p className="text-sm">Client type: {client.confidential ? "Confidential" : "Public"}. Grant: authorization_code. PKCE: {client.pkce_required ? `Required (${client.pkce_method})` : "Unavailable"}. Allowed scopes: {client.allowed_scopes?.join(", ") ?? "Unavailable"}. profile/email require openid. OIDC also requires a fresh nonce.</p>
++    <pre className="overflow-x-auto rounded bg-slate-100 p-3 text-xs">{example}</pre>
++    <Button variant="secondary" onClick={() => void copy(example)}>Copy environment example</Button>
++    <p role="status" className="text-sm">{status}</p>
++    <p className="text-sm">Keep credentials in the consuming server environment. Never use public frontend build variables for secrets. Choose the exact callback URI your application uses.</p>
++    <Link className="underline" href={`/applications/${client.application_id}/user-access`}>Manage application access</Link>
++  </section>;
++}
++
++export function OAuthRedirectEditor({ applicationId, client, onChanged }: { applicationId: string; client: OAuthClient; onChanged: (client: OAuthClient) => void }) {
++  const [uris, setUris] = useState(client.redirect_uris);
++  const [busy, setBusy] = useState(false);
++  const pending = useRef(false);
++  const [error, setError] = useState("");
++  const [success, setSuccess] = useState("");
++  const [fieldErrors, setFieldErrors] = useState<Record<string, string[]>>({});
++  const summary = useRef<HTMLDivElement>(null);
++  useEffect(() => { if (error) summary.current?.focus(); }, [error]);
++  async function save(event: React.FormEvent) {
++    event.preventDefault();
++    if (pending.current) return;
++    setError(""); setSuccess(""); setFieldErrors({});
++    if (!uris.length || uris.some((uri) => !uri)) { setError("At least one complete redirect URI is required."); return; }
++    if (new Set(uris).size !== uris.length) { setError("Duplicate redirect URIs are not allowed."); return; }
++    pending.current = true; setBusy(true);
++    try { const next = await applicationsService.updateOAuthRedirects(applicationId, client.id, uris, client.updated_at); onChanged(next); setUris(next.redirect_uris); setSuccess("Redirect URIs saved."); }
++    catch (e) {
++      setError(getApiErrorMessage(e));
++      if (e instanceof AxiosError && e.response?.status === 422) setFieldErrors(e.response.data.errors ?? {});
++    }
++    finally { pending.current = false; setBusy(false); }
++  }
++  return <form onSubmit={save} className="space-y-3 border-t pt-4">
++    <h3 className="font-semibold">Manage exact redirect URIs</h3>
++    <p className="text-sm text-slate-600">Values are sent unchanged and must exactly match the callback. No wildcards or fragments. Production callbacks require HTTPS. The current backend accepts HTTP; use it only for local development.</p>
++    {error ? <div ref={summary} tabIndex={-1}><Alert>{error}</Alert>{Object.entries(fieldErrors).map(([field, messages]) => <p className="text-sm text-red-600" key={field}><a href={`#redirect-${field.split(".")[1] ?? "0"}`} className="underline">{field.startsWith("redirect_uris.") ? `Redirect URI ${Number(field.split(".")[1]) + 1}` : "Redirect configuration"}</a>: {messages.join(" ")}</p>)}</div> : null}
++    <fieldset disabled={busy || client.revoked} className="space-y-3">
++      {uris.map((uri, index) => <div key={index} className="flex flex-wrap gap-2"><label className="w-full text-sm" htmlFor={`redirect-${index}`}>Redirect URI {index + 1}</label><input id={`redirect-${index}`} aria-invalid={Boolean(fieldErrors[`redirect_uris.${index}`])} aria-describedby={fieldErrors[`redirect_uris.${index}`] ? `redirect-error-${index}` : undefined} value={uri} className="min-w-0 flex-1 rounded border p-2" onChange={(e) => setUris(uris.map((old, at) => at === index ? e.target.value : old))} /><Button type="button" variant="secondary" onClick={() => setUris(uris.filter((_, at) => at !== index))}>Remove URI {index + 1}</Button>{fieldErrors[`redirect_uris.${index}`] ? <p id={`redirect-error-${index}`} className="w-full text-sm text-red-600">{fieldErrors[`redirect_uris.${index}`].join(" ")}</p> : null}</div>)}
++      <Button type="button" variant="secondary" onClick={() => setUris([...uris, ""])}>Add URI</Button>
++      <Button type="submit" isLoading={busy}>Save redirect URIs</Button>
++    </fieldset>
++    {success ? <p role="status">{success}</p> : null}
++  </form>;
++}
+diff --git a/frontend/tests/unit/application-history.test.tsx b/frontend/tests/unit/application-history.test.tsx
+new file mode 100644
+index 0000000..2b34fb0
+--- /dev/null
++++ b/frontend/tests/unit/application-history.test.tsx
+@@ -0,0 +1,25 @@
++import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
++import { afterEach, expect, it, vi } from "vitest";
++const { get } = vi.hoisted(() => ({ get: vi.fn() }));
++vi.mock("@/services/api-client", async (original) => ({ ...await original<typeof import("@/services/api-client")>(), apiClient: { get } }));
++import { ApplicationHistory } from "@/components/admin/applications/ApplicationHistory";
++afterEach(() => { cleanup(); vi.resetAllMocks(); });
++it("loads only stored application events when opened and paginates history", async () => {
++  get.mockResolvedValue({ data: { data: [{ id: 1, action: "application.access_granted", actor_id: "admin", subject_id: "user", client_id: null, created_at: "2026-10-07T00:00:00Z" }], last_page: 2 } });
++  render(<ApplicationHistory applicationId="application" />);
++  expect(get).not.toHaveBeenCalled();
++  fireEvent.click(screen.getByRole("button", { name: "Administrative history" }));
++  await screen.findByText("application.access_granted");
++  expect(get).toHaveBeenCalledWith("/api/admin/applications/application/history", { params: { page: 1 } });
++  fireEvent.click(screen.getByRole("button", { name: "Next history" }));
++  await waitFor(() => expect(get).toHaveBeenLastCalledWith("/api/admin/applications/application/history", { params: { page: 2 } }));
++});
++it("shows a retryable history failure without inventing events", async () => {
++  get.mockRejectedValueOnce(new Error("private failure")).mockResolvedValue({ data: { data: [], last_page: 1 } });
++  render(<ApplicationHistory applicationId="application" />);
++  fireEvent.click(screen.getByRole("button", { name: "Administrative history" }));
++  await screen.findByRole("alert");
++  expect(screen.queryByText("private failure")).not.toBeInTheDocument();
++  fireEvent.click(screen.getByRole("button", { name: "Retry history" }));
++  await screen.findByText("No recorded events.");
++});
+diff --git a/frontend/tests/unit/oauth-onboarding.test.tsx b/frontend/tests/unit/oauth-onboarding.test.tsx
+new file mode 100644
+index 0000000..701b701
+--- /dev/null
++++ b/frontend/tests/unit/oauth-onboarding.test.tsx
+@@ -0,0 +1,43 @@
++import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
++import { AxiosError } from "axios";
++import { afterEach, beforeEach, expect, it, vi } from "vitest";
++const { update } = vi.hoisted(() => ({ update: vi.fn() }));
++vi.mock("@/services/applications.service", () => ({ applicationsService: { updateOAuthRedirects: update } }));
++import { OAuthClientIntegration, OAuthRedirectEditor } from "@/components/admin/applications/OAuthClientIntegration";
++import { getApiErrorMessage } from "@/services/api-client";
++const client = { id: "client", application_id: "application", name: "Server", confidential: true, revoked: false, redirect_uris: ["https://client.test/callback?Case=Value%2F"], grant_types: ["authorization_code"], pkce_required: true, pkce_method: "S256", allowed_scopes: ["openid", "profile", "email", "iam:read"], issuer: "https://iam.test", discovery_url: "https://iam.test/.well-known/openid-configuration", created_at: null, updated_at: "2026-10-07T00:00:00Z" };
++beforeEach(() => { vi.resetAllMocks(); Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: vi.fn().mockResolvedValue(undefined) } }); });
++afterEach(cleanup);
++it("shows and copies non-secret SDK information, with mandatory S256 and explicit access navigation", async () => {
++  render(<OAuthClientIntegration client={{ ...client, client_secret: "hidden-secret", access_token: "hidden-token" } as typeof client} />);
++  expect(screen.getByText(/PKCE: Required \(S256\)/)).toBeInTheDocument();
++  expect(screen.getByRole("link", { name: "Manage application access" })).toHaveAttribute("href", "/applications/application/user-access");
++  fireEvent.click(screen.getByRole("button", { name: "Copy environment example" }));
++  await screen.findByText("Copied.");
++  const example = vi.mocked(navigator.clipboard.writeText).mock.calls[0][0];
++  expect(example).toContain(client.issuer); expect(example).toContain(client.redirect_uris[0]);
++  expect(example).not.toContain("hidden-secret"); expect(example).not.toContain("hidden-token");
++});
++it("adds/removes exact URIs, prevents duplicates, and sends the optimistic version", async () => {
++  const changed = vi.fn(); update.mockResolvedValue(client);
++  render(<OAuthRedirectEditor applicationId="application" client={client} onChanged={changed} />);
++  fireEvent.click(screen.getByRole("button", { name: "Add URI" }));
++  fireEvent.change(screen.getByLabelText("Redirect URI 2"), { target: { value: client.redirect_uris[0] } });
++  fireEvent.click(screen.getByRole("button", { name: "Save redirect URIs" }));
++  expect(screen.getByRole("alert")).toHaveTextContent("Duplicate"); expect(update).not.toHaveBeenCalled();
++  fireEvent.change(screen.getByLabelText("Redirect URI 2"), { target: { value: " https://other.test/callback " } });
++  fireEvent.click(screen.getByRole("button", { name: "Remove URI 1" }));
++  fireEvent.click(screen.getByRole("button", { name: "Save redirect URIs" }));
++  await waitFor(() => expect(update).toHaveBeenCalledWith("application", "client", [" https://other.test/callback "], client.updated_at));
++  expect(changed).toHaveBeenCalledWith(client);
++});
++it("revoked clients cannot change redirect URIs", () => {
++  render(<OAuthRedirectEditor applicationId="application" client={{ ...client, revoked: true }} onChanged={vi.fn()} />);
++  expect(screen.getByRole("button", { name: "Save redirect URIs" })).toBeDisabled();
++});
++it("never shows exception-bearing server failures", () => {
++  for (const status of [400, 401, 403, 404, 409, 429, 500]) {
++    const error = new AxiosError("secret"); error.response = { status, data: { message: "SQLSTATE stack trace secret" } } as AxiosError["response"];
++    expect(getApiErrorMessage(error)).not.toMatch(/SQLSTATE|stack trace|secret|token/);
++  }
++});

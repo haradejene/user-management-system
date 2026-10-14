@@ -1,0 +1,32 @@
+backend/app/Http/Controllers/Applications/ApplicationAuditController.php | +31 -0
+backend/app/Http/Controllers/Applications/OAuthClientController.php | +10 -4
+backend/app/Http/Requests/Applications/StoreOAuthClientRequest.php | +4 -0
+backend/app/Http/Requests/Applications/UpdateOAuthRedirectsRequest.php | +13 -0
+backend/app/Http/Resources/OAuthClientResource.php | +6 -0
+backend/app/Services/ApplicationAccessService.php | +4 -0
+backend/app/Services/AuditService.php | +1 -1
+backend/app/Services/OAuthClientService.php | +25 -0
+backend/bootstrap/app.php | +1 -0
+backend/routes/api.php | +3 -0
+backend/tests/Feature/Applications/OAuthClientReadTest.php | +4 -0
+backend/tests/Feature/Applications/OAuthOnboardingTest.php | +56 -0
+docs/iam-onboarding-report.md | +111 -0
+frontend/src/components/admin/applications/ApplicationDetails.tsx | +2 -0
+frontend/src/components/admin/applications/ApplicationHistory.tsx | +32 -0
+frontend/src/components/admin/applications/ApplicationUserAccessGrant.tsx | +4 -4
+frontend/src/components/admin/applications/OAuthClientDetail.tsx | +3 -2
+frontend/src/components/admin/applications/OAuthClientForm.tsx | +18 -8
+frontend/src/components/admin/applications/OAuthClientIntegration.tsx | +77 -0
+frontend/src/components/auth/AuthProvider.tsx | +5 -3
+frontend/src/services/api-client.ts | +7 -1
+frontend/src/services/applications.service.ts | +4 -0
+frontend/src/types/oauth-client.ts | +5 -0
+frontend/tests/e2e/application-user-access.spec.ts | +10 -1
+frontend/tests/e2e/oauth-clients.spec.ts | +28 -3
+frontend/tests/unit/application-history.test.tsx | +25 -0
+frontend/tests/unit/application-user-access.test.tsx | +14 -4
+frontend/tests/unit/oauth-clients.test.tsx | +10 -1
+frontend/tests/unit/oauth-onboarding.test.tsx | +43 -0
+
+29 files changed, 556 insertions(+), 32 deletions(-)
+Includes all implementation/tests and the report; excludes generated review artifacts and pre-existing untracked user documents.
