@@ -6,13 +6,32 @@ namespace Doxa\Laravel\Oidc;
 
 use Doxa\Laravel\Contracts\TransactionStore;
 use Doxa\Laravel\Exceptions\IdTokenValidationException;
+use Doxa\Laravel\Identity\DoxaIdentity;
+use Doxa\Laravel\Token\TokenResponse;
 use Doxa\Laravel\Transaction\AuthorizationTransaction;
 use Firebase\JWT\ExpiredException;
 use Firebase\JWT\SignatureInvalidException;
 
 final class IdTokenValidator
 {
-    public function __construct(private readonly JwksProvider $jwks, private readonly TransactionStore $transactions) {}
+    /** @var \WeakMap<AuthorizationTransaction, array{token: string, subject: string}> */
+    private \WeakMap $verified;
+
+    public function __construct(private readonly JwksProvider $jwks, private readonly TransactionStore $transactions)
+    {
+        $this->verified = new \WeakMap;
+    }
+
+    /** Internal persistence proof; never exports claims or credentials. */
+    public function assertVerifiedIdentity(#[\SensitiveParameter] TokenResponse $tokens, #[\SensitiveParameter] DoxaIdentity $identity, #[\SensitiveParameter] AuthorizationTransaction $transaction): void
+    {
+        $this->transactions->assertClaimed($transaction);
+        $proof = $this->verified[$transaction] ?? null;
+        if ($proof === null || $identity->issuer() !== $transaction->issuer || $identity->subject() !== $proof['subject']
+            || ! hash_equals($proof['token'], hash('sha256', $tokens->idToken()))) {
+            throw new IdTokenValidationException('invalid_id_token');
+        }
+    }
 
     /** @return array<string, mixed> */
     public function validate(#[\SensitiveParameter] string $token, #[\SensitiveParameter] AuthorizationTransaction $transaction): array
@@ -73,6 +92,8 @@ final class IdTokenValidator
             if (! is_string($claims['sub'] ?? null) || $claims['sub'] === '') {
                 throw new IdTokenValidationException('invalid_id_token');
             }
+
+            $this->verified[$transaction] = ['token' => hash('sha256', $token), 'subject' => $claims['sub']];
 
             return $claims;
         } catch (IdTokenValidationException $exception) {

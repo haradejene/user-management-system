@@ -6,7 +6,7 @@ namespace Doxa\Laravel\Transaction;
 
 use Doxa\Laravel\Authorization\Authorization;
 use Doxa\Laravel\Config\DoxaConfig;
-use Doxa\Laravel\Contracts\TransactionStore;
+use Doxa\Laravel\Contracts\ManagedTransactionStore;
 use Doxa\Laravel\Exceptions\CallbackException;
 use Doxa\Laravel\Exceptions\ExpiredTransactionException;
 use Doxa\Laravel\Exceptions\ReplayException;
@@ -17,7 +17,7 @@ use Illuminate\Cache\RedisStore;
 use Illuminate\Cache\Repository;
 use Illuminate\Contracts\Encryption\Encrypter;
 
-final class CacheTransactionStore implements TransactionStore
+final class CacheTransactionStore implements ManagedTransactionStore
 {
     /** @var \WeakMap<AuthorizationTransaction, bool> */
     private \WeakMap $claimed;
@@ -153,6 +153,19 @@ final class CacheTransactionStore implements TransactionStore
                 throw new TransactionException('transaction_storage_failure');
             }
             $this->cache->forget($this->key($state));
+        } catch (\Throwable) {
+            throw new TransactionException('transaction_storage_failure');
+        }
+    }
+
+    public function assertFinished(#[\SensitiveParameter] AuthorizationTransaction $transaction): void
+    {
+        try {
+            $marker = $this->cache->get($this->key($transaction->state).'.claim');
+            if (! isset($this->claimed[$transaction]) || $transaction->expiresAt <= time()
+                || ! is_array($marker) || ($marker['status'] ?? null) !== 'succeeded') {
+                throw new TransactionException('transaction_storage_failure');
+            }
         } catch (\Throwable) {
             throw new TransactionException('transaction_storage_failure');
         }

@@ -130,6 +130,90 @@ The only accepted prompt values are absence (`null`) and the exact string `login
 
 There is no arbitrary parameter map, `fromArray` request adapter or security-parameter override. Never construct options from `$request->query()` or callback data; choose an explicit option for the trusted server-side route/workflow. Browser query parameters are not read as options and cannot override the SDK's selected prompt, state, nonce, client, redirect URI, scopes or S256. Callback `prompt` is ignored and scrubbed with other callback query data. Options affect only the outgoing request; they are not stored as transaction fields or sent to the token endpoint, and do not change binding, expiry, claims/provenance, replay handling, exchange, ID-token/JWKS or UserInfo validation.
 
+### Current application-access checks
+
+IAM offers the client-bound `GET /oauth/application-access` resource. It needs a valid user-delegated access credential with `openid`; it does not need administrator permissions or accept identity/application selectors. Universal contract v1.2 specifies optional SDK support.
+
+This SDK does **not** expose `checkApplicationAccess()`. Identity-only callbacks discard tokens after validation/optional UserInfo. Milestone A optionally retains credentials behind an opaque server-side context, but implements no resource requests, refresh or linking confirmation. `DoxaIdentity` has no token getter and cannot authenticate an IAM resource call. Do not use cached identity/UserInfo as a current access decision.
+
+### Managed credentials — Milestone A groundwork
+
+Managed retention is explicit per authorization attempt. Existing `beginLogin()` and `handleCallback(): DoxaIdentity` calls remain unchanged and need no credential table, credential key or owner adapter. This package does not yet claim complete Universal Contract v1.3 managed-capability conformance.
+
+Configure `doxa.credentials` only when using managed login:
+
+```php
+'credentials' => [
+    'enabled' => true,
+    'connection' => 'pgsql', // Host connection name; separate SDK connection/instrumentation.
+    'table' => 'doxa_credential_contexts',
+    'key' => env('DOXA_CREDENTIAL_KEY'),
+    'key_id' => env('DOXA_CREDENTIAL_KEY_ID'),
+    'lifetime_seconds' => 3600, // Finite host-approved absolute lifetime, 60–604800 seconds.
+    'unbound_seconds' => 300,   // 1–600 seconds to finish ordinary association.
+    'tombstone_seconds' => 3600,// 60–604800 seconds; bounded stale-operation protection.
+],
+```
+
+Explicitly publish and review the migration, then run it through the host's normal deployment process:
+
+```shell
+php artisan vendor:publish --tag=doxa-credentials-migrations
+php artisan migrate
+```
+
+The provider never migrates, creates credential records or starts cleanup jobs on boot. The migration honors the configured connection/table; keep these stable across installation and rollback. Laravel's resolved connection configuration, including database URLs, is retained. In-memory SQLite databases are rejected because they cannot preserve contexts across processes; SQLite tests use persistent files. `illuminate/database` is now a runtime dependency with the same Laravel 10/11/12 constraints. No Eloquent user model, guard, IAM database table or cross-database foreign key is required.
+
+Supply a **dedicated random 32-byte credential key**, either raw or `base64:` encoded, through protected host configuration, plus a nonsecret key identifier (1–64 letters/digits/dots/underscores/hyphens). The Laravel adapter uses AES-256-CBC encryption with Laravel's integrity protection and a versioned JSON payload. There is **no APP_KEY fallback**. A host explicitly approving reuse of an existing Laravel key must deliberately configure that key here: compromise/rotation then affects both concerns. The key identifier must match on decrypt. Automatic key-ring fallback/rotation is not implemented; preserve keys for retained records or deliberately invalidate/delete them before changing keys. A host may replace `CredentialCipher` with an approved key-management adapter. Never print configuration/key/ciphertext or include them in diagnostics/backups without equivalent access controls.
+
+Register a trusted `Doxa\Laravel\Contracts\CredentialHostBinding` implementation in the host container. No permissive default is provided. Its responsibilities are:
+
+- `capture(Request, ManagedLoginPolicy)`: resolve authorized protected host data before redirect. For `pending_link`, return nonempty string `initiator`, `link`, `target` and an integer `deadline` no more than ten minutes ahead. The link must equal the policy reference. The target is a local host identifier, never an IAM selector. Keep values bounded JSON scalars/arrays, not models, services or credentials.
+- `validate(Request, metadata, operation)`: reject stale/cancelled host transactions, wrong initiator/session/purpose/identity/target, ineligible accounts or unauthorized operations. Operations are `begin`, `callback`, `bind`, `delete` and `restore`. Metadata before callback contains `purpose`, `host`, `browser`; record metadata later contains that snapshot under `policy` plus exact `issuer`, `client`, `subject`, scopes and lifecycle. Account identifiers must include the host's tenant/model namespace where needed.
+- `complete(Request, metadata)`: for ordinary binding only, resolve the **committed exact `(issuer, subject)` mapping**, enforce local eligibility and any authorized session-regeneration transition, then return `['account' => $localAccountKey, 'session' => hash('sha256', $request->session()->getId())]`. It must not create mappings, accept a browser-supplied account as proof or authenticate a local user. A supplied user ID/boolean is not trusted evidence.
+
+Choose policy and authorization options in trusted controller/service code:
+
+```php
+use Doxa\Laravel\Credentials\ManagedLoginPolicy;
+
+// Before redirect: server-selected retention, independent of AuthorizationOptions.
+return $doxa->beginManagedLogin(ManagedLoginPolicy::ordinary());
+
+// On the matching callback route:
+$result = $doxa->handleManagedCallback($request);
+$identity = $result->identity();
+$context = $result->credentialContext();
+
+// Host resolves its existing exact mapping, checks eligibility and establishes its session.
+// Only after that mapping/session is committed, the configured adapter can verify it:
+$context = $doxa->bindCredentialContext($context);
+```
+
+An identity-only handler cannot upgrade a transaction to managed retention; a managed transaction cannot silently fall back to identity-only. Mismatches fail before exchange. State/nonce/S256, browser binding, exact configuration, transaction expiry, claim provenance and one-time exchange remain mandatory. Older transactions without a managed policy remain identity-only. Custom transaction adapters must explicitly implement `ManagedTransactionStore`, preserve policy and implement `assertFinished`; ordinary adapters remain usable for identity-only login.
+
+The callback validates identity and configured UserInfo before persistence, inserts an encrypted nonusable `staged` record, finalizes the existing authorization transaction, verifies its successful completion, and conditionally activates `awaiting_binding` or `pending_link`. Insertion/commit/finalization/activation failure returns no managed result, never retries the code and never falls back to identity-only. Staged crashes remain nonusable and expire through cleanup. Contexts/results reject PHP and JSON serialization and redact debug output. `DoxaIdentity` remains unchanged. Neither a context nor a managed result contains a raw token getter.
+
+Binding returns a **replacement** opaque context. Persist only its `serverReference()` in the protected host association after successful return; replace the old unbound reference. The replacement contains a separately random completion proof, whose hash and immutable attempt ID are encrypted in a durable nonusable `binding` claim before host mapping validation. Activation requires that exact attempt, hash, version and live state; claim/mapping failures retire only that attempt. The proof preimage is released only after the active write is acknowledged. An active row alone never makes an old unbound reference usable: lost acknowledgement, unavailable compensation or worker death releases no proof and requires fresh authorization. Keep the complete replacement reference server-side and exclude it from logs. Storage recovery must not reconstruct a completed reference from its record ID/hash. Restoration also rechecks live trusted host ownership/session policy; storage or host-validation failure denies restoration. A known losing binder cannot compensate another attempt. Unreleased records remain inaccessible and expire through normal cleanup. The table schema is unchanged. Any active records from the earlier uncommitted implementation have no completion proof and fail closed; invalidate those test/pilot records and authorize again rather than synthesizing proof or converting an ID-only reference. Existing identity-only applications need no migration.
+
+Opaque context IDs have 256 bits of randomness; completed references additionally carry an independent 256-bit release proof. `serverReference()` is **only** for a protected server-side host association, never browser cookies, public JSON, URLs, logs or request parameters. Restore through `$doxa->restoreCredentialContext($storedServerReference)`; it independently validates current ownership/session/issuer/client and lifecycle. `CredentialContext::fromServerReference()` constructs no authorization proof. Ordinary unbound contexts may only be bound/deleted; completed contexts cannot be transferred or rebound across accounts. Initial session regeneration is permitted only through the explicit host adapter's bind verification. Later regeneration requires retiring/re-authorizing the context in Milestone A.
+
+For pending linking, trusted host code may start `ManagedLoginPolicy::pendingLink($protectedLinkReference)`. The adapter must resolve/recheck the authenticated administrator or equivalent initiator, initiating session, specific link transaction, immutable target and deadline. The verified identity remains separate in protected host pending-link storage. **Milestone A cannot complete/promote pending-link contexts or perform their future access check.** Do not create a new mapping from this result alone. Later Milestone B must implement the fresh access-check/confirmation boundary; the IAM decision and host mapping are not one distributed atomic operation.
+
+Before logout/session invalidation, unlink, cancellation, account security events or context replacement, invoke `$doxa->deleteCredentialContext($context)` while the trusted host binding can still be validated. Deletion is local, idempotent and version-fenced; it erases access/refresh material but does not revoke IAM tokens or end IAM sessions. A wrong caller cannot delete another owner's context. Hosts must arrange durable cleanup/reconciliation if storage is unavailable and keep associations protected; losing a record requires fresh authorization.
+
+Run cleanup explicitly from a protected operational scheduler:
+
+```shell
+php artisan doxa:credentials:cleanup --limit=100
+```
+
+The bounded command expires staged/unbound/binding/pending/active records whose deadlines are due, erases secret material, and later purges tombstones. It never performs network calls. A deleted/expired/unusable record cannot be restored by stale binding or cleanup. Backups and restores must not resurrect obsolete credential versions. Preflight verifies the primary context-ID key, unique authorization provenance, standalone status/expiry/purge indexes, required columns, nonnullable required fields and integer lifecycle/version fields. Missing constraints reject managed login before discovery/redirect; nothing repairs the schema automatically. Catalog inspection is implemented and tested only for SQLite and PostgreSQL; other drivers, including MySQL/MariaDB, reject managed readiness until supported and verified. The database store uses atomic conditional updates on identifier/version/status/expiry and a separate instrumented connection; no process-local mutex or file-cache lock is treated as distributed credential coordination. Credentials remain outside the ten-minute authorization transaction cache. Storage mutations reject ambient transactions so a later host rollback cannot undo an SDK operation already reported as durable. Ordinary association must verify a host mapping committed before binding; cross-store pending-link completion is deferred.
+
+Access expiry is conservatively based on token-request start, with a 60-second safety margin. No refresh token is invented when absent; unknown refresh expiry is recorded as unknown. Receiving/retaining a refresh token does not implement refresh, renew local sessions or prove current IAM access. See `verification.md` for database/matrix evidence and remaining driver limits.
+
+For development verification, `python tools/verify-managed.py --composer-phar /path/to/composer.phar --postgresql` runs the sequential framework matrix with the existing compatibility profiles. Configure `PGHOST`, `PGPORT`, `PGUSER`, optional `PGPASSWORD`, and `DOXA_CREDENTIAL_TEST_DATABASE` first; the database name must begin with `doxa_sdk_`. Every fixture creates/drops only its random SDK test table. Use an isolated database, never an application database. The runner retains audit reports separately; historical compatibility resolution needs the explicit `--historical-advisories` option where Composer blocks the pinned fixtures. `--reuse-locks` rechecks source using matching previously generated locks/audits without new resolution. It still runs full suites, database races, static analysis, style, strict validation and platform checks, and restores baseline vendor afterward. This tooling needs Python only for development, not SDK runtime.
+
 ## Identity and UserInfo
 
 Use `issuer()` and `subject()` together as the permanent identity key. Doxa currently issues the central public UUID as `sub`; the SDK preserves it as an opaque string. Never map permanently by email, including verified email. The host owns mapping uniqueness, disabled-account policy, linking/provisioning and local authorization.
@@ -138,7 +222,7 @@ Optional accessors: `email()`, `emailVerified()`, `name()`, `givenName()`, `fami
 
 Identity construction requires successful token validation. RS256 signature, trusted RSA JWKS (minimum 2048 bits), exact issuer, audience/authorized party, required expiry/issued-at, optional not-before, nonce and nonempty subject are mandatory. **Decoded JWT is not validated identity.** This version uses **zero clock skew**, within the contract's maximum 60 seconds; synchronize clocks. No skip-validation switch exists.
 
-With `userinfo_enabled=true`, access-token provenance must include `openid`, the token is sent only as a bearer header, and UserInfo subject must match validated ID-token subject. Supplied allowlisted profile/email values replace earlier attributes; missing values preserve ID-token values. Issuer/subject never change. UserInfo failure fails the callback safely, rather than silently accepting enrichment or reopening the transaction. Default login skips UserInfo entirely. No access/refresh tokens are returned or persisted; refresh tokens received from IAM are discarded.
+With `userinfo_enabled=true`, access-token provenance must include `openid`, the token is sent only as a bearer header, and UserInfo subject must match validated ID-token subject. Supplied allowlisted profile/email values replace earlier attributes; missing values preserve ID-token values. Issuer/subject never change. UserInfo failure fails the callback safely, rather than silently accepting enrichment or reopening the transaction. Default login skips UserInfo entirely. Identity-only login returns/persists no access or refresh token. Explicit managed login persists only the necessary encrypted credential material, separately from identity.
 
 ## Errors and host security
 
@@ -191,3 +275,26 @@ Current Composer advisories block the historical Laravel 10/11 targets and older
 Profiles share this checkout's `vendor/` because existing subprocess security fixtures bootstrap that directory. Run them sequentially, or use a separate checkout per parallel CI job. Every profile resolves independently of the checked-in Laravel 12 lock. CI can invoke these same commands; no repository-root CI configuration is installed by this package. All recorded runs use real PHP 8.2.12; the fixture's Composer platform is also pinned to 8.2.12. Other PHP runtimes need their own test runs before being reported as verified.
 
 Without `--run`, the tool only generates the selected manifest for manual Composer commands using `COMPOSER=.compatibility/composer-<profile>.json`. Generated manifests, locks and JUnit reports remain local. To return to the checked-in Laravel 12 environment, clear any manually set `COMPOSER` variable and run `composer install`, followed by the normal package checks above. Neither matrix generation nor execution modifies the HRM repository. The `hrm` profile is not the complete HRM manifest or lockfile.
+
+### Offline backup restoration and rollback
+
+The SDK has **no automatic backup rollback detection**. An older complete encrypted row and an old completed reference can both remain authentic. Encryption, a version counter in the same backup, or waiting for cleanup is not a recovery procedure. Apply the following after any database/replica/PITR restore, snapshot rollback, or import that might reintroduce credential rows or host credential associations. Restore normal business mappings under the host's separate policy; never resume backed-up OAuth/linking attempts.
+
+1. Keep a durable external maintenance/readiness gate closed on **every** application node before starting restore. Stop/drain HTTP traffic, queue workers, schedulers and long-lived processes, including any stale workers connected to the old database. Disable managed credentials in effective host configuration as an additional gate; reload cached configuration/processes. The gate must survive an interrupted restore and must not itself be rolled back with the application database. Do not reopen any traffic that can restore or use a context merely because ordinary health checks pass.
+2. Restore the approved business database while offline. Using the database operator console, or a protected Laravel maintenance console with the reviewed connection/table configuration, **delete every row** from the dedicated SDK credential table, including staged, pending, active, terminal records and tombstones. Preserve its schema and constraints. For example, in a protected Laravel console (never an HTTP route):
+
+   ```php
+   $connection = DB::connection(config('doxa.credentials.connection'));
+   $table = config('doxa.credentials.table', 'doxa_credential_contexts');
+   $connection->table($table)->delete(); // Commit; use no surrounding uncommitted host transaction.
+   if ($connection->table($table)->count() !== 0) {
+       throw new RuntimeException('Credential restore invalidation incomplete');
+   }
+   ```
+
+   This offline operation deliberately erases all credentials without decrypting them and is repeatable after interruption. Select the actual dedicated SDK table explicitly; do not operate on an IAM token table. If separate credential databases/partitions serve the application, invalidate every one. Verify on the writer and every failover/replica that could serve the application; replicas must not replay an older snapshot after the gate opens.
+3. Invalidate host server-side credential references, local sessions and pending-link/login transactions under host policy. Remove the SDK authorization-transaction namespace (`doxa.transaction.*`, including processing/exchange/terminal markers) from its configured cache using supported backend operations. A full cache flush is appropriate **only if the store is dedicated and approved**; otherwise use an operator-reviewed namespaced purge. No stale worker may remain to recreate records. If targeted cache/host invalidation cannot be verified, keep the gate closed. Never reconstruct pending authorization records or retry an old code.
+4. From a fresh, isolated maintenance process under the closed traffic gate, load the approved managed configuration/key/host adapter for verification only. Verify zero credential-table rows, successful required schema readiness, purged host associations/attempts and cache namespace. Confirm a previously valid protected reference fails `restoreCredentialContext` because the record is missing (not merely because configuration or the key is disabled), and that stale conditional operations cannot recreate a missing row. Do not print the reference, credentials or ciphertext. An independent SDK test exercises this sequence on SQLite and PostgreSQL; the real deployment must rehearse it on its own restored backup/engine/topology.
+5. Only after recorded operator verification, re-enable the approved managed configuration, restart fresh processes, check readiness against the invalidated database and reopen traffic. Require fresh authorization and host association for every managed context. Never copy credential rows, old context references/completion proofs, authorization-cache records, session snapshots or pending-link state back from the stale backup after invalidation. Retain old backups only under the host's access/retention policy; repeat this procedure if any are restored again.
+
+If interrupted at any point, leave the external gate closed, stop any restarted workers and repeat invalidation/verification from step 2. The table must remain empty until fresh authorized traffic is admitted. This procedure supplies no provider-side revocation and does not claim that deleting local rows invalidates IAM-issued tokens outside this SDK. An inability to enforce the gate, erase all copies or verify recovery is a **production deployment blocker**.

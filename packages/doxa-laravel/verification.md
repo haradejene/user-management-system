@@ -1,4 +1,119 @@
-# Authorization-options milestone verification
+# Milestone A binding security remediation
+
+Verified 2026-10-16. This record supersedes the initial Milestone A binding/readiness behavior below. SDK package only; identity-only APIs, identity fields, OAuth validation and one-time exchange are unchanged. No refresh, rotation, resource/API access, access check, provider revocation, pending-link promotion or IAM/HRM implementation was added. The universal contract and original 219 tests remain unchanged; nothing was staged, committed or pushed.
+
+## Binding completion and compensation
+
+The old implementation equated an active row with confirmed binding and compensated by deleting its reloaded latest version. A lost write acknowledgement plus unavailable compensation could leave a restorable record; a stale binder could delete another worker's successful binding.
+
+The corrected flow claims `awaiting_binding -> binding` with a CSPRNG 256-bit attempt ID and independent completion-proof hash before host mapping verification. The nonusable claim retains the unbound deadline. The trusted host adapter must verify the already committed exact mapping and permitted session transition. `binding -> active` requires the same attempt, proof hash, expected version, ordinary purpose, live state and expiry. The proof preimage is never stored in the credential record. Only an acknowledged active write releases a replacement opaque context containing that preimage. `bindCredentialContext` now returns that replacement context; hosts must replace their protected server reference after successful return. An active row without a released proof is insufficient for restore/use, even after storage recovers or a process restarts. A proof still supplies no ownership authorization: restoration independently revalidates current host ownership/session/issuer/client/lifecycle. No old authorization transaction or code is reopened. Recovery of an unreleased attempt requires fresh authorization, not automatic promotion.
+
+`abandonBinding` may erase only the exact attempt/version in binding/active state. A losing CAS has a different attempt or version and cannot affect the winner; no broad reload-and-delete exists. Mapping failure retires its owned claim. If compensation is unavailable, no completion proof is released, so the record remains inaccessible until bounded cleanup. A crash after the claim or after activation also releases no completed reference. Stale/terminal/missing records cannot be revived. Pending-link purpose remains unpromotable. Earlier uncommitted ID-only active records fail closed and require invalidation/fresh authorization; no table migration is required for the encrypted attempt metadata.
+
+## Schema readiness and backup recovery
+
+Preflight uses native SQLite/PostgreSQL catalogs on the write connection. It verifies required columns, nonnullable required fields, integer version/expiry fields, primary context-ID key, unique authorization provenance and standalone status/expiry/purge indexes. Partial/expression/incomplete indexes do not establish these invariants. A malformed table rejects managed login before discovery/redirect; no schema is automatically repaired. The official published migration is also executed by the provider integration test. Other database drivers, including MySQL/MariaDB, currently reject managed readiness rather than claiming unverified compatibility.
+
+README's **Offline backup restoration and rollback** procedure requires a durable external traffic/readiness gate, stopped/drained workers, deletion of every restored credential row on all serving copies, invalidation of host references/sessions/linking and OAuth transaction cache state, fresh-process schema/zero-row/old-reference verification, and fresh authorization before reopening. Interruption leaves the gate closed and requires repeating invalidation. Stale credential rows, completed references/proofs, sessions and pending authorization/linking state must never be copied back afterward. There is no automatic rollback detector. A real deployment's inability to quiesce, invalidate or verify all copies remains a deployment blocker; this document does not certify HRM operations.
+
+## Exact additional regression coverage
+
+`tests/Integration/BindingCompletionTest.php` adds:
+
+- `test_lost_acknowledgement_and_compensation_outage_cannot_restore_after_recovery`: committed active write, unavailable reconciliation/erasure and fresh-service restoration denial.
+- `test_failed_host_mapping_retires_only_its_durable_binding_attempt`: committed mapping failure terminalizes only the claimed attempt and erases credentials.
+- `test_completion_proof_and_attempt_are_immutable_and_stale_reconciliation_is_harmless`: missing/forged proof and foreign owner rejection; wrong-attempt/version reconciliation preserves success; proof preimage absent from record metadata/debug output.
+- `test_schema_without_unique_provenance_fails_before_authorization`: expected columns without required uniqueness reject before discovery/exchange; official schema passes.
+- `test_offline_restore_invalidation_removes_all_old_references_and_fences_stale_writes`: deliberately restores an integrity-valid old active row, reproduces rollback acceptance, then verifies offline row erasure prevents restoration and stale reconciliation cannot recreate it.
+- `test_independent_manager_binders_preserve_the_winner_and_process_death_releases_no_proof`: two independent processes synchronize after reading the original version; losing manager executes its normal compensation path; winner remains restorable only by its owner. Separate workers exit immediately after claim and activation, proving neither releases usable completion proof.
+
+The pre-existing lost-acknowledgement compensation test remains and passes. New manager workers complement, rather than replace, existing store/process races. Managed tests adopt the returned completed reference without removing security assertions. All original tracked test/fixture files remain byte-equivalent to HEAD after line-ending normalization.
+
+## Frozen-source matrix
+
+| Environment | Full suite (SQLite-backed credential fixtures) | PostgreSQL credential/process suite | PHPStan / Pint / strict Composer / platform |
+| --- | --- | --- | --- |
+| Laravel 10.50.2 | 290 tests / 2,090 assertions | 67 tests / 189 assertions | Passed |
+| Laravel 11.57.0 | 290 tests / 2,090 assertions | 67 tests / 189 assertions | Passed |
+| Laravel 12.69.3 | 290 tests / 2,090 assertions | 67 tests / 189 assertions | Passed |
+| Dependency floors (Laravel 10.50.2, Guzzle 7.8.2, JWT 7.1.0) | 290 tests / 2,090 assertions | 67 tests / 189 assertions | Passed |
+| Restored checked-in Laravel 12 baseline | 290 tests / 2,090 assertions | 67 tests / 189 assertions | Passed |
+
+Latest cleanup validation evidence is retained in ignored `.compatibility/schema-nullability/`: per-profile JUnit reports, PostgreSQL logs, `results.json`, `summary.json` and `source.sha256`. All five profiles above passed with zero errors, failures or skips; PHPStan, Pint, strict Composer validation and platform checks passed. The recorded cleanup source SHA-256 is `b5079b4e68e243fb66ca708440ffcd42c2084639630d0c550a3a033e79a396e1`. One dependency-floor installation timed out; the failed evidence was retained and the unchanged retry passed.
+
+Previous binding-hardening runs passed 289 tests / 2,085 assertions and PostgreSQL 66 tests / 184 assertions per profile, with zero errors, failures or skips. PHP remains 8.2.12; SQLite 3.39.2 and PostgreSQL 18.4 remain the tested database versions. That earlier source fingerprint was `dc25bd4e8b17f4f904efe19e7f49c83f55362dada2bf1097e710268ca757e910`. The first remediation matrix passed before the durable-claim refinement; the final matrix was rerun on the refined source. One final Laravel 12 attempt was interrupted with 13h50m elapsed time and three unchanged PublicErrorTraceTest subprocess timeouts (not assertion failures). Its log/JUnit are retained as `laravel12-interrupted-*`; the unchanged focused trace suite then passed 25 tests / 1,298 assertions, and the complete Laravel 12/floors/baseline profiles were rerun successfully without changing tests/timeouts. Earlier Laravel 10/11 runs used the identical final fingerprint.
+
+Existing matching Composer locks/audit evidence were reused; no dependency resolution or advisory policy was altered. Historical advisory findings remain 10/4/13 for Laravel 10/11/floors and zero for Laravel 12/baseline; this is not a fresh audit or a security approval of historical dependencies. An isolated PostgreSQL cluster on port 55439 served these tests; no IAM/HRM database was accessed or changed. No production database/version is certified. Read-only HRM inspection finds local `.env` selecting PostgreSQL, while default/example configuration selects MySQL. Actual production configuration remains unconfirmed; MySQL/MariaDB readiness/deployment is blocked pending an implemented and tested driver path.
+
+Complete changes and amendment-only changes are available in ignored `.compatibility/managed-credentials/milestone-a.patch` and `binding-hardening.patch`, with matching stat files. Source freeze excludes documentation. Backup recovery must be rehearsed under the real host gate/topology. Future Milestone B must preserve the completion-proof plus trusted ownership gate before any credential use, along with its separately required refresh/uncertainty/access-check conformance. None of that runtime behavior is implemented here.
+
+# Historical initial Milestone A record
+
+# Managed credential storage — Milestone A
+
+Implemented 2026-10-15 against Universal Contract v1.3 sections 19–26. This is opt-in credential retention and storage/lifecycle groundwork, not full v1.3 managed-capability conformance. No refresh, rotation, IAM resource/access-check operation, provider revocation or identity-linking confirmation is implemented. No IAM/HRM runtime, universal contract or existing security test was changed. Nothing was staged, committed or pushed.
+
+## API and ownership
+
+`DoxaClient` adds `beginManagedLogin(ManagedLoginPolicy, ?AuthorizationOptions)`, `handleManagedCallback(Request): ManagedLoginResult`, `bindCredentialContext`, `deleteCredentialContext` and owner-checking `restoreCredentialContext`. Existing identity-only signatures, authorization options and `DoxaIdentity` are preserved. The result exposes only identity and an opaque context; protected result/context/policy values refuse PHP/JSON serialization and redact debugging. A 256-bit opaque server reference is not ownership proof.
+
+The host must explicitly register `CredentialHostBinding`. The adapter resolves authorized server records, verifies live ownership/session/issuer/subject/purpose, and resolves the committed exact local mapping for ordinary binding. No public binding method accepts a user ID or boolean mapping proof. Session regeneration at initial binding requires explicit host verification. Pending linking binds the initiating administrator, browser/session, link transaction, immutable target and short deadline; it cannot be completed/promoted in this milestone. No automatic account/session creation occurs.
+
+## Persistence and failure model
+
+The explicitly published migration creates a separate credential table with primary context ID, unique authorization provenance, indexed lifecycle/expiry/tombstone fields, monotonic version, key ID and encrypted payload. The payload binds identity, client, scopes, purpose, ownership, expiry and lifecycle to the record ID/version. Clear operational columns are checked against authenticated encrypted content. Database conditional updates check ID/version/state and, for live transitions, expiry. Stale writes cannot resurrect terminal/missing records. The adapter returns metadata only, never credentials.
+
+Laravel's established AES-256-CBC/MAC primitive protects JSON using an explicitly configured dedicated 32-byte key and key identifier. There is no APP_KEY fallback or automatic key rotation. Hosts may configure an approved cipher adapter; backup/key retention and controlled rotation remain operational responsibilities. An isolated database connection suppresses Laravel SQL events/query logs; external instrumentation must also exclude credential data.
+
+Managed policy is persisted in the protected authorization transaction before redirect. Handler mismatch fails before exchange; legacy transactions remain identity-only. Token responses remain internal; managed expiry/optional refresh fields and scope/error omission semantics are checked. Credential staging requires both exact exchanged-token provenance and an identity proof from that same validated ID token/claimed transaction. This adds no raw-token getter and does not change identity fields.
+
+After existing full validation and optional UserInfo, callback storage progresses from nonusable `staged`, through confirmed transaction finalization, to `awaiting_binding` or `pending_link`. Only durable confirmation returns a result. Failure returns no success/fallback and never re-exchanges a code. The original transaction secrets are not retained by a completed context. Post-commit/finalization/activation fault injection verifies compensation or nonusable staged-orphan cleanup. Store outages fail closed; hosts must arrange cleanup/reconciliation when storage recovers, and preset deadlines bound abandoned retention. Local erasure does not revoke IAM tokens.
+
+Deletion erases secret fields, increments the version and keeps a bounded tombstone. Cleanup handles staged/unbound/pending/active expiry and later tombstone purge; tombstones not yet due cannot starve live-expiry batches. The adapter rejects ambient transactions and in-memory databases rather than reporting durable success that a caller can roll back or lose at process exit. Laravel URL/read-write connection configuration is resolved before creating the isolated connection. Ordinary binding verifies an already committed host mapping; cross-store pending-link completion waits for Milestone B.
+
+## Acceptance coverage
+
+| Contract criteria | Added verification |
+| --- | --- |
+| AC22 | Identity-only needs no managed configuration/table/adapter; trusted opt-in and policy retention; hostile callback parameters cannot opt in; mismatched handlers make zero exchanges. |
+| AC23 | Durable stage/finalize/activate ordering; insert, post-commit, finish and activation faults; no result/fallback/re-exchange; actual worker exit after staging and orphan cleanup. |
+| AC24 | Identity remains credential-free; protected serialization/debugging; argument-enabled recursive error-trace inspection rejects credentials/key/nonce/verifier leakage; no chained low-level errors. |
+| AC25 | Explicit key/table/adapter preflight, wrong-key/integrity failures, ciphertext/column substitution, persistence through independent processes, no SQL logging/events, ambient rollback protection. |
+| AC26 | Session/user/issuer/client/subject and exchanged-token identity substitution failures; immutable owner binding; pending initiator/link/target/deadline checks; no pending completion. |
+| AC32/AC36/AC37, storage subset | Idempotent local deletion, expired/cancelled contexts, lost binding response, stale-write fences, independent-process bind/delete and bind/cleanup races, terminal-state preservation. |
+| AC01–AC21 | All pre-existing tests retained and run; no assertion removed, weakened or skipped. |
+
+## Validation results
+
+Final frozen-source verification completed on PHP **8.2.12**. All runs have **zero failures, errors or skipped tests**. The complete suite retains the original 219 tests and adds 64 tests/cases. Dedicated PostgreSQL runs include independent-process races, restart and staged-callback process-death coverage, rather than sequential-only simulations.
+
+| Environment | Laravel | Full SQLite-backed suite | Dedicated PostgreSQL suite | PHPStan / Pint / strict manifest / platform |
+| --- | --- | --- | --- | --- |
+| Laravel 10 | 10.50.2 | 283 tests / 2,049 assertions | 60 tests / 148 assertions | Passed |
+| Laravel 11 | 11.57.0 | 283 tests / 2,049 assertions | 60 tests / 148 assertions | Passed |
+| Laravel 12 | 12.69.3 | 283 tests / 2,049 assertions | 60 tests / 148 assertions | Passed |
+| Dependency floors | 10.50.2; Guzzle 7.8.2; JWT 7.1.0 | 283 tests / 2,049 assertions | 60 tests / 148 assertions | Passed |
+| Restored checked-in baseline | 12.69.3 | 283 tests / 2,049 assertions | 60 tests / 148 assertions | Passed |
+
+The package manifest passes unqualified `composer validate --strict`; generated compatibility fixtures retain strict validation with `--no-check-all --no-check-publish` for their deliberate version pins. Every profile passes platform checks. Composer refreshed lock classification/hash after promoting the existing database component to runtime; no dependency versions changed. Its canonical phpdotenv repository URLs were refreshed as metadata. Historical-fixture lock refresh used the explicit command-only advisory exception; audits remain recorded: Laravel 10 **10**, Laravel 11 **4**, dependency floors **13**, Laravel 12/baseline **0** advisories. These are findings, not passing security audits for the historical profiles. The final source rerun reused matching locks/audits, performed every suite/check again, and restored baseline vendor.
+
+Evidence is in ignored `.compatibility/managed-credentials/`: per-profile logs/JUnit, `results.json`, frozen source fingerprint, and complete SDK patch/stat including new files. `git diff --check` and reverse patch applicability checks pass. Source fingerprint (PHP source/config/migration/tests plus manifest/lock) is `84e16123e51bedd25c01e78db22d06080431288a54240ad5603475b20ac8f448`; it remained unchanged through the final matrix. Documentation changes after validation do not alter that fingerprint.
+
+## Database assessment and limitations
+
+SQLite test library: **3.39.2**. PostgreSQL test server: **18.4**, a temporary isolated cluster under the SDK's ignored `.compatibility` directory, on loopback port 55439. No IAM or HRM database/schema was migrated. Database races use independent PHP workers/connections and database compare-and-set operations, not sequential mocks or process-local locking.
+
+Read-only HRM inspection found MySQL as `backend/config/database.php`'s default, consistent with the integration documentation's MySQL-specific VARBINARY identity constraints. InnoDB supports the required conditional updates, transactions, primary/unique indexes and long-text payloads; the SDK does exact identity comparisons in protected PHP data rather than relying on SQL text collations. **MySQL deployment compatibility is not claimed:** its adapter/concurrency/migration tests were not run, and actual HRM production engine/version was not queried. SQLite/PostgreSQL evidence does not establish MySQL compatibility or real HRM integration.
+
+Historical locked environments report existing dependency advisories; audits are separate from passing protocol tests. No persistent advisory-ignore policy or dependency upgrade was introduced. Missing packages in one standalone analysis attempt during a dependency switch were an invocation-order issue; final matrix checks run sequentially against stable vendor installations. No tests were suppressed to recover.
+
+## Remaining Milestone B work
+
+Implement lazy refresh, mandatory rotation validation, durable refresh dispatch/claim/recovery and uncertain-outcome handling; add scoped internal credential use and `checkApplicationAccess` with its existing 403 ambiguity. Extend transport without weakening existing login error handling. Pending-link completion must then enforce explicit confirmation, a fresh authoritative access check, exact mapping/commit coordination and cleanup. Host logout/unlink/security/cancellation hooks and key/backup policy remain host integration responsibilities. This milestone supplies no HRM linking implementation or automatic federation logout.
+
+Previous milestone records below are retained as historical evidence.
+
+# Authorization-options milestone verification (historical)
 
 Verified 2026-10-07 on PHP 8.2.12 and Composer 2.10.1 against Universal SDK Contract v1.1 (`../../docs/doxa-sdk-contract.md`). The contract was extended before finalizing the Laravel implementation. This milestone changes only the SDK and universal contract; it does not modify IAM, HRM, account linking, provisioning, role mapping or refresh-token support. No commits or pushes were made.
 

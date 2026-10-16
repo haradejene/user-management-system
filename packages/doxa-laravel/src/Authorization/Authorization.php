@@ -22,7 +22,7 @@ final class Authorization
         return isset(self::$issued[$transaction]);
     }
 
-    public function create(#[\SensitiveParameter] DoxaConfig $config, ProviderMetadata $provider, #[\SensitiveParameter] string $binding): AuthorizationTransaction
+    public function create(#[\SensitiveParameter] DoxaConfig $config, ProviderMetadata $provider, #[\SensitiveParameter] string $binding, #[\SensitiveParameter] ?array $managed = null): AuthorizationTransaction
     {
         if ($provider != $this->discovery->discover() || $provider->issuer !== $config->issuer) {
             throw new DiscoveryException('invalid_issuer');
@@ -30,7 +30,7 @@ final class Authorization
         $now = time();
 
         $transaction = new AuthorizationTransaction($this->random(), $this->random(), $this->random(), $config->issuer,
-            $config->clientId, $config->redirectUri, $config->scopes, $now, $now + 600, $binding, $provider);
+            $config->clientId, $config->redirectUri, $config->scopes, $now, $now + 600, $binding, $provider, managed: $managed);
         self::$issued ??= new \WeakMap;
         self::$issued[$transaction] = true;
 

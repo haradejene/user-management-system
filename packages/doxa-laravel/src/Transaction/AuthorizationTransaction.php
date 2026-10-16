@@ -22,7 +22,14 @@ final readonly class AuthorizationTransaction
         private string $browserBinding,
         public ProviderMetadata $provider,
         public string $status = 'pending',
+        private ?array $managed = null,
     ) {}
+
+    /** Absent in legacy serialized transactions: always identity-only. @return array<string, mixed>|null */
+    public function managedPolicy(): ?array
+    {
+        return $this->managed ?? null;
+    }
 
     public function nonce(): string
     {
