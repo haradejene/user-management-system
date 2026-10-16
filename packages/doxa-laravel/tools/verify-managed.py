@@ -49,7 +49,7 @@ def checks(profile, env):
     if args.postgresql:
         pgsql = env.copy()
         pgsql['DOXA_CREDENTIAL_TEST_DRIVER'] = 'pgsql'
-        run(profile, 'pgsql', ['php', 'vendor/bin/phpunit', '--filter', 'ManagedCredentialsTest|CredentialRaceTest|BindingCompletionTest', '--do-not-cache-result'], pgsql)
+        run(profile, 'pgsql', ['php', 'vendor/bin/phpunit', '--filter', 'ManagedCredentialsTest|CredentialRaceTest|BindingCompletionTest|RefreshCoordinationTest', '--do-not-cache-result'], pgsql)
     run(profile, 'phpstan', ['php', 'vendor/bin/phpstan', 'analyse', '--no-progress'], env)
     run(profile, 'pint', ['php', 'vendor/bin/pint', '--test'], env)
     # Audit nonzero means findings, not passing security evidence; preserve full JSON report.

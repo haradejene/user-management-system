@@ -9,6 +9,7 @@ use Doxa\Laravel\Config\DoxaConfig;
 use Doxa\Laravel\Contracts\CredentialHostBinding;
 use Doxa\Laravel\Contracts\CredentialStore;
 use Doxa\Laravel\Contracts\ManagedTransactionStore;
+use Doxa\Laravel\Contracts\RefreshCredentialStore;
 use Doxa\Laravel\Exceptions\CredentialException;
 use Doxa\Laravel\Identity\DoxaIdentity;
 use Doxa\Laravel\Oidc\IdTokenValidator;
@@ -178,6 +179,43 @@ final class CredentialManager
         $this->services()['store']->delete($context->recordId(), $record['version']);
     }
 
+    /** Internal B1 primitives. No public client refresh API or network operation. */
+    public function claimRefresh(#[\SensitiveParameter] CredentialContext $context, #[\SensitiveParameter] Request $request, int $seconds = 30): RefreshAttempt
+    {
+        return $this->refreshStore()->claimRefresh($context, $this->owned($context, $request, 'refresh'), $seconds);
+    }
+
+    public function dispatchRefresh(#[\SensitiveParameter] CredentialContext $context, #[\SensitiveParameter] Request $request, RefreshAttempt $attempt): RefreshAttempt
+    {
+        return $this->refreshStore()->dispatchRefresh($context, $this->owned($context, $request, 'refresh'), $attempt);
+    }
+
+    /** @param array<string, mixed> $replacement Internal validated material; never an HTTP result. */
+    public function completeRefresh(#[\SensitiveParameter] CredentialContext $context, #[\SensitiveParameter] Request $request, RefreshAttempt $attempt, #[\SensitiveParameter] array $replacement): void
+    {
+        $this->refreshStore()->completeRefresh($context, $this->owned($context, $request, 'refresh'), $attempt, $replacement);
+    }
+
+    public function releaseRefresh(#[\SensitiveParameter] CredentialContext $context, #[\SensitiveParameter] Request $request, RefreshAttempt $attempt): void
+    {
+        $this->refreshStore()->releaseRefresh($context, $this->owned($context, $request, 'refresh'), $attempt);
+    }
+
+    public function failRefresh(#[\SensitiveParameter] CredentialContext $context, #[\SensitiveParameter] Request $request, RefreshAttempt $attempt): void
+    {
+        $this->refreshStore()->failRefresh($context, $this->owned($context, $request, 'refresh'), $attempt);
+    }
+
+    private function refreshStore(): RefreshCredentialStore
+    {
+        $store = $this->services()['store'];
+        if (! $store instanceof RefreshCredentialStore) {
+            throw new CredentialException('credential_configuration_error');
+        }
+
+        return $store;
+    }
+
     /** Restores an opaque handle from protected host storage, with independent authorization. */
     public function restore(#[\SensitiveParameter] string $reference, #[\SensitiveParameter] Request $request): CredentialContext
     {
@@ -202,7 +240,7 @@ final class CredentialManager
             if ($operation !== 'bind' && $browser !== (new BrowserContext)->binding($request)) {
                 throw new CredentialException('incompatible_context');
             }
-            if ($record['status'] === 'active' && ! $context->confirms($record)) {
+            if ($record['owner'] !== null && ! $context->confirms($record)) {
                 throw new CredentialException('incompatible_context');
             }
             $this->services()['host']->validate($request, $record, $operation);

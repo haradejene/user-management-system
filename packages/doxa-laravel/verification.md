@@ -1,4 +1,58 @@
-# Milestone A binding security remediation
+# Durable refresh coordination — Milestone B1
+
+B1 implements internal storage/lifecycle primitives against Universal Contract v1.3 sections 20–23, with storage-focused coverage for AC25–AC26, AC29–AC32 and AC36–AC37. It is not complete refresh or managed-capability conformance. No refresh HTTP exchange, lazy-refresh orchestration, resource request, application-access check, pending-link refresh/promotion, or IAM/HRM implementation is provided. Identity-only APIs and all existing tests remain unchanged.
+
+## State machine and durability
+
+`RefreshCredentialStore` extends the internal store capability without changing the Milestone A adapter interface. `CredentialManager` revalidates live host binding for every internal `refresh` operation. Completion proof is required for every owned record, including refreshing and terminal states; an identifier or constructed attempt is not authorization.
+
+| Transition | Durable condition |
+| --- | --- |
+| `active -> refreshing/claimed` | Completed ordinary owner/proof, correct issuer/client/subject/purpose/grant, expected version, unusable-or-near-expiry access and an available nonexpired refresh credential. Random 256-bit attempt ID; version increments. |
+| `refreshing/claimed -> refreshing/dispatched` | Exact context/attempt/version/phase and live deadline; version increments before future dispatch is allowed. The returned attempt records dispatch intent, not a network exchange. This transition is never acknowledged twice. |
+| `refreshing/claimed -> active` | Explicit release, or expired-claim cleanup while original context lifetime remains valid. Durable absence of dispatch intent and conditional version update fence every old dispatcher. |
+| `refreshing/dispatched -> active` | Exact live attempt/version and internally validated replacement material. Atomically replace both credentials, scopes and expiry; require a distinct refresh token and no scope expansion; retain original owner/proof and absolute lifetime. |
+| `refreshing/dispatched -> unusable` | Explicit failure or overdue-attempt recovery; erase credentials and record sanitized uncertainty. No old-token retry or lease-based redispatch. |
+| Any live state to terminal | Owner-authorized deletion or expiry increments the version and erases credentials. No stale claim/completion/compensation can revive it. A never-dispatched claim whose context lifetime ended expires normally. |
+
+The existing indexed `expires_at` becomes the bounded attempt deadline (default 30 seconds, trusted internal range 1–60). Its original context limit is integrity-protected inside the encrypted attempt metadata. No schema/migration/index change is needed. Recovery never extends absolute lifetime. Cleanup remains an explicit host-scheduled operation.
+
+Lost claim or dispatch-intent acknowledgements leave durable nonusable phase evidence. Storage/reconciliation failure fails closed. After completion acknowledgement loss, only the exact already committed response/attempt/version can be acknowledged by a read-only reconciliation; no token is resubmitted. Reconciliation rejects ambient transactions, terminal state and newer versions. B2 must still supply HTTP/protocol validation, safe dispatch orchestration and categorized provider handling. B1 returns no raw credentials and does not provide a token-acquisition API.
+
+## Regression scope
+
+Before the subsequent deterministic race regression, `tests/Integration/RefreshCoordinationTest.php` added 29 tests/cases: atomic replacement and preservation of owner/lifetime; pre-dispatch release; duplicate/out-of-order transitions; owner/session/issuer/client/subject/purpose/proof rejection; forged attempts/context/version; malformed or nonrotating replacements; committed writes with lost acknowledgements at claim/intent/completion, including unavailable reconciliation; exact-response reconciliation and ambient-transaction rejection; later-version/stale-worker fencing; absolute expiry; protected attempt diagnostics; independent-process claim/delete/completion/cleanup races; and process exit after claim or dispatch intent. Fixtures never perform refresh HTTP requests. Process tests establish database state-machine behavior, not end-to-end HTTP uncertainty recovery.
+
+## B1 validation results (before the latest test-only addition)
+
+Final frozen-PHP-source validation passed on PHP 8.2.12, SQLite 3.39.2 and an isolated PostgreSQL 18.4 cluster. No IAM or HRM database was used. All full-suite JUnit reports have zero errors, failures and skips; PostgreSQL runs include independent processes/connections. The original 290 Milestone A tests remain unchanged; B1 adds 29 cases / 135 assertions. The package PostgreSQL runner filter now includes `RefreshCoordinationTest`; its Python syntax check passed.
+
+| Profile | Full SQLite-backed SDK suite | PostgreSQL managed-store/process suite | PHPStan / Pint / strict Composer / platform |
+| --- | --- | --- | --- |
+| Laravel 10.50.2 | 319 tests / 2,225 assertions | 96 tests / 324 assertions | Passed |
+| Laravel 11.57.0 | 319 tests / 2,225 assertions | 96 tests / 324 assertions | Passed |
+| Laravel 12.69.3 | 319 tests / 2,225 assertions | 96 tests / 324 assertions | Passed |
+| Dependency floors (Laravel 10.50.2, Guzzle 7.8.2, JWT 7.1.0) | 319 tests / 2,225 assertions | 96 tests / 324 assertions | Passed |
+| Restored checked-in Laravel 12 baseline | 319 tests / 2,225 assertions | 96 tests / 324 assertions | Passed |
+
+The normalized PHP source/test fingerprint for that earlier matrix is `8a760cf133584a8750f09ec8fd7e54cd07efc4beb0f798a1da216e49803736af`: SHA-256 over sorted package-relative PHP paths followed by their LF-normalized contents under `src`, `tests`, `config` and `database`. Working-tree and isolated-validation-copy fingerprints matched. Documentation and Python tooling are outside this PHP fingerprint. Existing profile manifests/locks were reused without resolution, dependency upgrades or advisory-policy changes. Baseline Composer validation used unqualified `--strict`; historical fixtures used the existing deliberate-pin `--no-check-all --no-check-publish` flags. No new dependency audit is claimed.
+
+Validation ran in a temporary package copy, with read-only Composer cache use, to preserve all existing `.compatibility` evidence. Local review logs, JUnit and results are retained outside the repository at `%TEMP%\doxa-b1-m5kfghkg\final`; preliminary runs remain separately retained in its parent. Initial Pint formatting issues were fixed. PostgreSQL absolute-path initialization failed before tests and succeeded with a relative temporary path; an output-variable error in the temporary final-run logger was corrected before the successful final rerun. No final SDK suite/check failed or was skipped. `git diff --check` and new-file whitespace checks passed. Content hashes confirmed no changes/additions/removals in existing compatibility evidence or unrelated root documents. Nothing was staged, committed or pushed.
+
+### Subsequent deterministic cleanup/completion regression
+
+The later test-only addition uses `RefreshUpdateBarrier` and independent PDO connections to pause completion after live validation, run legitimate cleanup, and resume the real conditional update. It asserts zero affected rows, terminal `unusable` state, both credentials erased, unchanged terminal payload/ciphertext, scopes and expiry, and rejected stale completion/restoration. Production code was unchanged by this addition.
+
+| Engine | New regression | Related managed-storage, binding, credential-race and refresh regressions |
+| --- | --- | --- |
+| Persistent SQLite | Passed: 1 test / 31 assertions | Passed: 97 tests / 355 assertions |
+| Isolated PostgreSQL | Passed: 1 test / 31 assertions | Passed: 97 tests / 355 assertions |
+
+These targeted runs used the checked-in Laravel 12 baseline. Targeted Pint and `git diff --check` passed. The full five-profile matrix, PHPStan, Composer/platform checks and other quality checks were not rerun after this test-only addition; the matrix totals and fingerprint above describe the earlier source snapshot, not the final test tree. No inferred full-suite totals or replacement fingerprint are claimed. Existing compatibility artifacts were unchanged and the isolated PostgreSQL server was stopped afterward.
+
+No production database is certified by these tests. MySQL/MariaDB remains unsupported and fails readiness. PostgreSQL and persistent SQLite remain the supported managed-store targets. The existing offline backup invalidation procedure is still required; B1 adds no rollback detector.
+
+# Historical Milestone A binding security remediation
 
 Verified 2026-10-16. This record supersedes the initial Milestone A binding/readiness behavior below. SDK package only; identity-only APIs, identity fields, OAuth validation and one-time exchange are unchanged. No refresh, rotation, resource/API access, access check, provider revocation, pending-link promotion or IAM/HRM implementation was added. The universal contract and original 219 tests remain unchanged; nothing was staged, committed or pushed.
 
