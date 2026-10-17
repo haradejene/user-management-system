@@ -11,12 +11,14 @@ use Doxa\Laravel\Authorization\Callback;
 use Doxa\Laravel\Config\DoxaConfig;
 use Doxa\Laravel\Contracts\ManagedTransactionStore;
 use Doxa\Laravel\Contracts\TransactionStore;
+use Doxa\Laravel\Credentials\ApplicationAccessDecision;
 use Doxa\Laravel\Credentials\CredentialContext;
 use Doxa\Laravel\Credentials\CredentialManager;
 use Doxa\Laravel\Credentials\ManagedLoginPolicy;
 use Doxa\Laravel\Credentials\ManagedLoginResult;
 use Doxa\Laravel\Discovery\Discovery;
 use Doxa\Laravel\Discovery\ProviderMetadata;
+use Doxa\Laravel\Exceptions\ApplicationAccessException;
 use Doxa\Laravel\Exceptions\AuthorizationException;
 use Doxa\Laravel\Exceptions\CredentialException;
 use Doxa\Laravel\Exceptions\DoxaException;
@@ -31,6 +33,17 @@ use Illuminate\Http\Request;
 
 final class DoxaClient
 {
+    public function checkApplicationAccess(#[\SensitiveParameter] CredentialContext $context): ApplicationAccessDecision
+    {
+        try {
+            return $this->manager()->checkApplicationAccess($context, $this->request, fn () => $this->discover());
+        } catch (DoxaException $error) {
+            throw new ApplicationAccessException($error->category);
+        } catch (\Throwable) {
+            throw new ApplicationAccessException('credential_lifecycle_failure');
+        }
+    }
+
     public function __construct(
         private readonly DoxaConfig $config,
         private readonly Discovery $discovery,

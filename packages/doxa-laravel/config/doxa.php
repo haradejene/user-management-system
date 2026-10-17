@@ -20,6 +20,7 @@ return [
         'key' => env('DOXA_CREDENTIAL_KEY'), // Explicit approved key, never APP_KEY fallback.
         'key_id' => env('DOXA_CREDENTIAL_KEY_ID'),
         'lifetime_seconds' => 3600,
+        'refresh_margin_seconds' => 60, // Integer 0..60; never extends actual expiry.
         'unbound_seconds' => 300,
         'tombstone_seconds' => 3600,
     ],

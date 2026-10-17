@@ -12,6 +12,11 @@ use Illuminate\Database\ConnectionInterface;
 
 final class DatabaseCredentialStore implements RefreshCredentialStore
 {
+    use ManagedApplicationAccess;
+
+    /** @var \WeakMap<self, \Closure>|null Internal deterministic-handler injection; never part of a diagnostic object graph. */
+    private static ?\WeakMap $operationHandlers = null;
+
     private readonly Connection $db;
 
     public function __construct(
@@ -19,6 +24,7 @@ final class DatabaseCredentialStore implements RefreshCredentialStore
         #[\SensitiveParameter] private readonly CredentialCipher $cipher,
         private readonly string $table = 'doxa_credential_contexts',
         private readonly int $tombstoneSeconds = 3600,
+        #[\SensitiveParameter] ?\Closure $operationHandler = null,
     ) {
         if (! $db instanceof Connection || preg_match('/^[A-Za-z_][A-Za-z0-9_]{0,62}$/D', $table) !== 1 || $tombstoneSeconds < 60 || $tombstoneSeconds > 604800) {
             throw new CredentialException('credential_configuration_error');
@@ -26,6 +32,10 @@ final class DatabaseCredentialStore implements RefreshCredentialStore
         if ($db->getDriverName() === 'sqlite' && ($db->getDatabaseName() === ':memory:'
             || str_contains($db->getDatabaseName(), 'mode=memory') || str_contains($db->getDatabaseName(), 'file::memory:'))) {
             throw new CredentialException('credential_configuration_error');
+        }
+        if ($operationHandler !== null) {
+            self::$operationHandlers ??= new \WeakMap;
+            self::$operationHandlers[$this] = $operationHandler;
         }
         // Isolated instrumentation; never emit credential SQL bindings through Laravel events.
         $this->db = clone $db;
@@ -144,26 +154,37 @@ final class DatabaseCredentialStore implements RefreshCredentialStore
 
     public function claimRefresh(#[\SensitiveParameter] CredentialContext $context, #[\SensitiveParameter] array $expected, int $seconds): RefreshAttempt
     {
-        $payload = $this->refreshOwner($context, $expected);
-        if ($seconds < 1 || $seconds > 60 || $payload['status'] !== 'active' || $payload['version'] !== $expected['version']
-            || $payload['access_expires_at'] > time() + 60 || ! is_string($payload['refresh_token'] ?? null)
-            || $payload['refresh_token'] === '' || ($payload['refresh_expires_at'] !== null && $payload['refresh_expires_at'] <= time() + 60)) {
+        return $this->claimForOperation($context, $expected, $seconds, false);
+    }
+
+    private function claimForOperation(#[\SensitiveParameter] CredentialContext $context, #[\SensitiveParameter] array $expected, int $seconds, bool $pending, int $margin = 60): RefreshAttempt
+    {
+        $payload = $this->refreshOwner($context, $expected, $pending);
+        $liveState = $pending ? 'pending_link' : 'active';
+        if ($seconds < 1 || $seconds > 60 || $payload['status'] !== $liveState || $payload['version'] !== $expected['version']
+            || $payload['access_expires_at'] > time() + $margin || ! is_string($payload['refresh_token'] ?? null)
+            || $payload['refresh_token'] === '' || ($payload['refresh_expires_at'] !== null && $payload['refresh_expires_at'] <= time() + $margin)) {
             throw new CredentialException('credential_lifecycle_failure');
         }
         $payload['refresh'] = ['id' => bin2hex(random_bytes(32)), 'phase' => 'claimed',
-            'context_expires_at' => $payload['expires_at']];
+            'context_expires_at' => $payload['expires_at'], 'return_state' => $liveState];
         $payload['status'] = 'refreshing';
         $payload['version']++;
         // Reuse the indexed lifecycle deadline; the protected original limit is never extended.
         $payload['expires_at'] = min($payload['expires_at'], time() + $seconds);
-        $this->replace($payload, $expected['version'], 'active', true);
+        $this->replace($payload, $expected['version'], $liveState, true);
 
         return new RefreshAttempt($payload['id'], $payload['refresh']['id'], $payload['version'], 'claimed');
     }
 
     public function dispatchRefresh(#[\SensitiveParameter] CredentialContext $context, #[\SensitiveParameter] array $expected, RefreshAttempt $attempt): RefreshAttempt
     {
-        $payload = $this->refreshAttempt($context, $expected, $attempt, 'claimed');
+        return $this->dispatchForOperation($context, $expected, $attempt, false);
+    }
+
+    private function dispatchForOperation(#[\SensitiveParameter] CredentialContext $context, #[\SensitiveParameter] array $expected, RefreshAttempt $attempt, bool $pending): RefreshAttempt
+    {
+        $payload = $this->refreshAttempt($context, $expected, $attempt, 'claimed', $pending);
         $payload['refresh']['phase'] = 'dispatched';
         $payload['version']++;
         $this->replace($payload, $attempt->version, 'refreshing', true);
@@ -187,26 +208,31 @@ final class DatabaseCredentialStore implements RefreshCredentialStore
 
     public function completeRefresh(#[\SensitiveParameter] CredentialContext $context, #[\SensitiveParameter] array $expected, RefreshAttempt $attempt, #[\SensitiveParameter] array $replacement): void
     {
-        $payload = $this->refreshOwner($context, $expected);
+        $this->completeForOperation($context, $expected, $attempt, $replacement, false);
+    }
+
+    private function completeForOperation(#[\SensitiveParameter] CredentialContext $context, #[\SensitiveParameter] array $expected, RefreshAttempt $attempt, #[\SensitiveParameter] array $replacement, bool $pending, int $margin = 60): void
+    {
+        $payload = $this->refreshOwner($context, $expected, $pending);
         $fields = ['access_token', 'refresh_token', 'access_expires_at', 'refresh_expires_at', 'scopes'];
         // Reconcile only the exact already-committed response after a lost store acknowledgement.
         // This is a local read, never another provider exchange.
-        if ($attempt->contextId === $payload['id'] && $attempt->phase === 'dispatched' && $payload['status'] === 'active'
+        if ($attempt->contextId === $payload['id'] && $attempt->phase === 'dispatched' && $payload['status'] === ($pending ? 'pending_link' : 'active')
             && $payload['version'] === $attempt->version + 1 && ($payload['refresh']['id'] ?? null) === $attempt->id
             && ($payload['refresh']['phase'] ?? null) === 'completed'
             && count($replacement) === count($fields)
             && $this->sameReplacement($payload, $replacement, $fields)) {
             return;
         }
-        $payload = $this->refreshAttempt($context, $expected, $attempt, 'dispatched');
+        $payload = $this->refreshAttempt($context, $expected, $attempt, 'dispatched', $pending);
         if (array_diff(array_keys($replacement), $fields) !== [] || count($replacement) !== count($fields)
             || ! is_string($replacement['access_token'] ?? null) || $replacement['access_token'] === ''
             || ! is_string($replacement['refresh_token'] ?? null) || $replacement['refresh_token'] === ''
             || hash_equals($payload['refresh_token'], $replacement['refresh_token'])
-            || ! is_int($replacement['access_expires_at'] ?? null) || $replacement['access_expires_at'] <= time() + 60
+            || ! is_int($replacement['access_expires_at'] ?? null) || $replacement['access_expires_at'] <= time() + $margin
             || $replacement['access_expires_at'] > time() + 2147483647
             || ! array_key_exists('refresh_expires_at', $replacement)
-            || ($replacement['refresh_expires_at'] !== null && (! is_int($replacement['refresh_expires_at']) || $replacement['refresh_expires_at'] <= time() + 60))
+            || ($replacement['refresh_expires_at'] !== null && (! is_int($replacement['refresh_expires_at']) || $replacement['refresh_expires_at'] <= time() + $margin))
             || ! is_array($replacement['scopes'] ?? null) || ! array_is_list($replacement['scopes'])
             || array_filter($replacement['scopes'], static fn ($scope) => ! is_string($scope) || $scope === '') !== []
             || array_diff($replacement['scopes'], $payload['scopes']) !== []
@@ -216,7 +242,7 @@ final class DatabaseCredentialStore implements RefreshCredentialStore
             throw new CredentialException('credential_lifecycle_failure');
         }
         $payload = [...$payload, ...$replacement];
-        $payload['status'] = 'active';
+        $payload['status'] = $pending ? 'pending_link' : 'active';
         $payload['expires_at'] = $payload['refresh']['context_expires_at'];
         $payload['refresh']['phase'] = 'completed';
         $payload['version']++;
@@ -224,17 +250,20 @@ final class DatabaseCredentialStore implements RefreshCredentialStore
     }
 
     /** @return array<string, mixed> */
-    private function refreshOwner(#[\SensitiveParameter] CredentialContext $context, #[\SensitiveParameter] array $expected): array
+    private function refreshOwner(#[\SensitiveParameter] CredentialContext $context, #[\SensitiveParameter] array $expected, bool $pending = false): array
     {
         $payload = $this->read($context->recordId());
         // Even read-only completion reconciliation must observe acknowledged durable state.
         $this->autocommit();
         foreach (['id', 'issuer', 'client', 'subject', 'purpose', 'owner', 'policy', 'binding', 'grant', 'scope_ceiling', 'absolute_expires_at'] as $field) {
-            if (! array_key_exists($field, $expected) || $payload[$field] !== $expected[$field]) {
+            if ((! array_key_exists($field, $expected) && ! ($pending && $field === 'binding'))
+                || ($payload[$field] ?? null) !== ($expected[$field] ?? null)) {
                 throw new CredentialException('incompatible_context');
             }
         }
-        if ($payload['purpose'] !== 'ordinary' || $payload['owner'] === null || ! $context->confirms($payload)
+        if ((! $pending && ($payload['purpose'] !== 'ordinary' || $payload['owner'] === null || ! $context->confirms($payload)))
+            || ($pending && ($payload['purpose'] !== 'pending_link' || $payload['owner'] !== null
+                || ($payload['policy']['host']['deadline'] ?? 0) <= time()))
             || $payload['grant'] !== 'authorization_code' || $payload['absolute_expires_at'] <= time()
             || $payload['expires_at'] <= time()) {
             throw new CredentialException('incompatible_context');
@@ -256,9 +285,9 @@ final class DatabaseCredentialStore implements RefreshCredentialStore
     }
 
     /** @return array<string, mixed> */
-    private function refreshAttempt(#[\SensitiveParameter] CredentialContext $context, #[\SensitiveParameter] array $expected, RefreshAttempt $attempt, string $phase): array
+    private function refreshAttempt(#[\SensitiveParameter] CredentialContext $context, #[\SensitiveParameter] array $expected, RefreshAttempt $attempt, string $phase, bool $pending = false): array
     {
-        $payload = $this->refreshOwner($context, $expected);
+        $payload = $this->refreshOwner($context, $expected, $pending);
         if ($attempt->contextId !== $payload['id'] || $attempt->phase !== $phase || $payload['status'] !== 'refreshing'
             || $payload['version'] !== $attempt->version || ($payload['refresh']['id'] ?? null) !== $attempt->id
             || ($payload['refresh']['phase'] ?? null) !== $phase) {
@@ -272,7 +301,7 @@ final class DatabaseCredentialStore implements RefreshCredentialStore
     private function releaseClaim(#[\SensitiveParameter] array $payload): void
     {
         $version = $payload['version'];
-        $payload['status'] = 'active';
+        $payload['status'] = $payload['refresh']['return_state'] ?? 'active';
         $payload['expires_at'] = $payload['refresh']['context_expires_at'];
         $payload['refresh']['phase'] = 'released';
         $payload['version']++;

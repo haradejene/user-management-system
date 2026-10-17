@@ -84,7 +84,7 @@ final class DoxaServiceProvider extends ServiceProvider
             }
 
             return ['store' => $app->make(CredentialStore::class), 'host' => $app->make(CredentialHostBinding::class),
-                'ttl' => $values['lifetime_seconds'] ?? 3600, 'unbound_ttl' => $values['unbound_seconds'] ?? 300];
+                'ttl' => $values['lifetime_seconds'] ?? 3600, 'unbound_ttl' => $values['unbound_seconds'] ?? 300, 'margin' => $values['refresh_margin_seconds'] ?? 60];
         }));
     }
 

@@ -322,7 +322,8 @@ final class ManagedCredentialsTest extends TestCase
         self::assertStringNotContainsString('SECRET', json_encode($result->identity()));
         self::assertFalse(method_exists($result->identity(), 'accessToken'));
         self::assertFalse(method_exists($result->credentialContext(), 'refreshToken'));
-        self::assertFalse(method_exists($this->f->client, 'checkApplicationAccess'));
+        // The integrated milestone adds only the fixed operation, still no token getter.
+        self::assertTrue(method_exists($this->f->client, 'checkApplicationAccess'));
     }
 
     public static function malformedRefresh(): array

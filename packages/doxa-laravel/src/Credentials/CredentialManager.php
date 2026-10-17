@@ -10,6 +10,8 @@ use Doxa\Laravel\Contracts\CredentialHostBinding;
 use Doxa\Laravel\Contracts\CredentialStore;
 use Doxa\Laravel\Contracts\ManagedTransactionStore;
 use Doxa\Laravel\Contracts\RefreshCredentialStore;
+use Doxa\Laravel\Discovery\ProviderMetadata;
+use Doxa\Laravel\Exceptions\ApplicationAccessException;
 use Doxa\Laravel\Exceptions\CredentialException;
 use Doxa\Laravel\Identity\DoxaIdentity;
 use Doxa\Laravel\Oidc\IdTokenValidator;
@@ -20,10 +22,77 @@ use Illuminate\Http\Request;
 
 final class CredentialManager
 {
+    /** Process-local invocation provenance, never a persisted dispatch permission.
+     * @var \WeakMap<object, array<string, mixed>>|null
+     */
+    private static ?\WeakMap $accessInvocations = null;
+
+    /** The only operation allowed for pending-link credentials. */
+    public function checkApplicationAccess(#[\SensitiveParameter] CredentialContext $context, #[\SensitiveParameter] Request $request, #[\SensitiveParameter] \Closure $discover): ApplicationAccessDecision
+    {
+        $record = $this->owned($context, $request, 'check_application_access');
+        $this->assertAccessRecord($context, $record);
+        $store = $this->services()['store'];
+        if (! $store instanceof DatabaseCredentialStore) {
+            throw new ApplicationAccessException('credential_lifecycle_failure');
+        }
+        $store->ready();
+        $provider = $discover();
+        if (! $provider instanceof ProviderMetadata || $provider->issuer !== $this->config->issuer) {
+            throw new ApplicationAccessException('incompatible_context');
+        }
+        $ticket = new \stdClass;
+        self::$accessInvocations ??= new \WeakMap;
+        self::$accessInvocations[$ticket] = ['manager' => $this, 'store' => $store,
+            'context' => $context, 'config' => $this->config, 'provider' => $provider, 'margin' => $this->services()['margin'],
+            'validate' => function () use ($context, $request): array {
+                $record = $this->owned($context, $request, 'check_application_access');
+                $this->assertAccessRecord($context, $record);
+
+                return $record;
+            }];
+        try {
+            return $store->checkApplicationAccess($this, $ticket);
+        } finally {
+            unset(self::$accessInvocations[$ticket]);
+        }
+    }
+
+    /** Internal one-shot handoff. A caller-created attempt/status/ticket authorizes nothing.
+     * @return array<string, mixed>
+     */
+    public function consumeAccessInvocation(object $ticket, #[\SensitiveParameter] DatabaseCredentialStore $store): array
+    {
+        $invocation = self::$accessInvocations[$ticket] ?? null;
+        if ($invocation === null || $invocation['manager'] !== $this || $invocation['store'] !== $store) {
+            throw new ApplicationAccessException('incompatible_context');
+        }
+        unset(self::$accessInvocations[$ticket]);
+        unset($invocation['manager'], $invocation['store']);
+
+        return $invocation;
+    }
+
+    /** @param array<string, mixed> $record */
+    private function assertAccessRecord(#[\SensitiveParameter] CredentialContext $context, #[\SensitiveParameter] array $record): void
+    {
+        $pending = $record['purpose'] === 'pending_link' && $record['owner'] === null
+            && ($record['policy']['host']['deadline'] ?? 0) > time();
+        $ordinary = $record['purpose'] === 'ordinary' && $record['owner'] !== null && $context->confirms($record);
+        if ((! $pending && ! $ordinary) || $record['grant'] !== 'authorization_code'
+            || ! in_array('openid', $record['scopes'], true)) {
+            throw new ApplicationAccessException('incompatible_context');
+        }
+        if (! in_array($record['status'], [$pending ? 'pending_link' : 'active', 'refreshing', 'checking'], true)
+            || $record['absolute_expires_at'] <= time() || $record['expires_at'] <= time()) {
+            throw new ApplicationAccessException('credential_lifecycle_failure');
+        }
+    }
+
     /** @var \WeakMap<CredentialContext, AuthorizationTransaction> */
     private \WeakMap $staged;
 
-    /** @var array{store: CredentialStore, host: CredentialHostBinding, ttl: int, unbound_ttl: int}|null */
+    /** @var array{store: CredentialStore, host: CredentialHostBinding, ttl: int, unbound_ttl: int, margin: int}|null */
     private ?array $services = null;
 
     /** @param \Closure(): array<string, mixed> $factory */
@@ -253,14 +322,16 @@ final class CredentialManager
         }
     }
 
-    /** @return array{store: CredentialStore, host: CredentialHostBinding, ttl: int, unbound_ttl: int} */
+    /** @return array{store: CredentialStore, host: CredentialHostBinding, ttl: int, unbound_ttl: int, margin: int} */
     private function services(): array
     {
         try {
             if ($this->services === null) {
                 $services = ($this->factory)();
+                $services['margin'] ??= 60;
                 if (! $services['store'] instanceof CredentialStore || ! $services['host'] instanceof CredentialHostBinding
                     || ! is_int($services['ttl']) || ! is_int($services['unbound_ttl'])
+                    || ! is_int($services['margin']) || $services['margin'] < 0 || $services['margin'] > 60
                     || $services['ttl'] < 60 || $services['ttl'] > 604800 || $services['unbound_ttl'] < 1 || $services['unbound_ttl'] > 600) {
                     throw new CredentialException('credential_configuration_error');
                 }
