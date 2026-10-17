@@ -6,6 +6,7 @@ namespace Doxa\Laravel\Tests\Fixtures;
 
 use Doxa\Laravel\Authorization\Authorization;
 use Doxa\Laravel\Authorization\BrowserContext;
+use Doxa\Laravel\Contracts\CredentialHostBinding;
 use Doxa\Laravel\Contracts\CredentialStore;
 use Doxa\Laravel\Contracts\ManagedTransactionStore;
 use Doxa\Laravel\Credentials\CredentialManager;
@@ -71,12 +72,13 @@ final class CredentialFixture
         $this->configure();
     }
 
-    public function configure(?CredentialStore $store = null, ?ManagedTransactionStore $transactions = null): void
+    public function configure(?CredentialStore $store = null, ?ManagedTransactionStore $transactions = null, ?CredentialHostBinding $host = null): void
     {
         $h = $this->login;
         $transactions ??= $h->store;
         $store ??= $this->store;
-        $this->manager = new CredentialManager($h->config, fn () => ['store' => $store, 'host' => $this->host, 'ttl' => 3600, 'unbound_ttl' => 300]);
+        $host ??= $this->host;
+        $this->manager = new CredentialManager($h->config, fn () => ['store' => $store, 'host' => $host, 'ttl' => 3600, 'unbound_ttl' => 300]);
         $this->client = new DoxaClient($h->config, $h->discovery, new Authorization($h->discovery), new BrowserContext, $transactions,
             new CodeExchange($h->config, $h->http, $transactions), new IdTokenValidator($h->jwks, $transactions), new UserInfo($h->http), $h->request(), $this->manager);
     }

@@ -13,6 +13,7 @@ use Illuminate\Database\ConnectionInterface;
 final class DatabaseCredentialStore implements RefreshCredentialStore
 {
     use ManagedApplicationAccess;
+    use PendingLinkCompletion;
 
     /** @var \WeakMap<self, \Closure>|null Internal deterministic-handler injection; never part of a diagnostic object graph. */
     private static ?\WeakMap $operationHandlers = null;

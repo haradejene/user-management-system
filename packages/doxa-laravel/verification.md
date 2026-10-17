@@ -1,6 +1,48 @@
-# Integrated managed refresh lifecycle and application-access checking
+# SDK pending-link completion protocol
 
-Verified 2026-10-17 against committed Universal Contract v1.3 (59300ff), building on A (4340056), B1 (ce46fa8) and B2 (b01d1cf). These are current executions, not historical B2 results. The implementation remains uncommitted. Complete v1.3 conformance is not claimed: pending-link confirmation/promotion and host mapping transactions remain deferred.
+Verified 2026-10-17 against contract v1.3 section 19.3 and AC26, AC34-AC37. The preceding managed-refresh/application-access implementation was reviewed, committed and pushed separately as `db0e1cc2545bdc1200cd166984178cfb8cf6b5d5` (`feat(sdk): implement managed refresh and application access`): 16 files, +1,258/-31. The pending-link changes described here remain unstaged and uncommitted. Earlier results below are historical, not substituted for these executions.
+
+## API, authority and local transaction boundary
+
+`DoxaClient::completePendingLink(CredentialContext): CredentialContext` returns a replacement completed reference. It accepts no account ID, confirmation boolean, prior access decision or constructible completion proof. The configured trusted `CredentialHostBinding` must additionally implement `PendingLinkHostBinding`; the database adapter is required. Other adapters fail closed for this optional operation. Identity-only APIs/configuration and DoxaIdentity are unchanged.
+
+The optional host extension atomically claims explicit confirmation and the exact protected linking transaction (`claimPendingLink`), commits the exact issuer/subject mapping and completed local linking state (`commitPendingLink`), independently verifies a durable exact-attempt commit (`verifyPendingLinkCommit`), and idempotently consumes/compensates only its own failed attempt (`abortPendingLink`). It must enforce initiating actor/session, immutable target, client/issuer/subject, deadline, eligibility/conflicts, permitted session transition and durable crash recovery. No production HRM adapter, mapping model, confirmation UI, session login or recovery scheduler is implemented by this package. The test adapter uses a durable SQL ledger to exercise the SDK protocol.
+
+Manager-private one-use invocation provenance binds the exact manager/store/context. A caller-created ticket cannot enter the store completion path. The SDK claims the live row version with an encrypted completion attempt marker before host side effects. Only that invocation can run the fresh fixed application-access check and necessary refresh; ordinary checks, restore and other completers cannot use an unresolved marker. No prior/caller-created decision is accepted. It then stages `link_binding` before asking the host to commit. Only after independently confirmed local commit does a fenced write change pending purpose to ordinary/active, bind the immutable target and trusted current session, and retain a new release-proof hash. The preimage is returned only after acknowledged activation or exact read-only reconciliation of that same activation. Old pending references cannot restore completed credentials or transfer ownership.
+
+Both the original short pending deadline and immutable absolute lifetime are preserved; promotion extends neither. A known losing CAS owns no compensation rights. An unknown initial acknowledgement requires reading its exact marker before host compensation. Later compensation/deletion is restricted to that attempt; newer/foreign work cannot be invalidated. Missing confirmation, denial/ambiguous 403, malformed or unavailable fresh access, expiry, conflict, cancellation, mapping failure and unresolved completion produce no completed result and retire the owned context/attempt. No host commit is blindly retried: lost acknowledgement permits only read-only proof of the exact committed mapping; otherwise abort and fresh authorization.
+
+No transaction spans IAM and the host database. Authorization remains point-in-time, not a continuing grant or distributed atomic mapping decision. The host must durably schedule exact-attempt reconciliation and safely persist the returned server reference before treating the workflow as usable. Death/lost receipt before that persistence requires idempotent host rollback/compensation, conditional SDK context destruction and fresh authorization, never proof reconstruction or reopening an attempt. Store outages can leave a blocked marker/stage, or an active row with no released proof; cleanup and the host recovery job must finish after recovery. README documents the protected operational recovery boundary. Completed logout removes credentials without implicitly unlinking a completed local identity mapping.
+
+## Current executed validation
+
+PHP 8.2.12, persistent SQLite 3.39.2, isolated PostgreSQL 18.4. The existing runner ran sequentially in a temporary SDK copy using the existing cached profile locks (`--reuse-locks --postgresql`). Runtime source, tests, configuration and tooling were byte-compared with the working tree; repository compatibility artifacts were preserved. PostgreSQL filtering now includes PendingLinkCompletionTest.
+
+| Profile | Full SQLite suite (tests / assertions) | PostgreSQL credential/concurrency suite | PHPStan / Pint / Composer strict + platform |
+| --- | --- | --- | --- |
+| Laravel 10 | 470 / 3,588 | 174 / 1,273 | Passed |
+| Laravel 11 | 470 / 3,588 | 174 / 1,273 | Passed |
+| Laravel 12 independent | 470 / 3,588 | 174 / 1,273 | Passed |
+| Guzzle/JWT dependency floors | 470 / 3,588 | 174 / 1,273 | Passed |
+| Restored baseline | 470 / 3,588 | 174 / 1,273 | Passed |
+
+The runner exited zero. Full-suite JUnit records zero failures, errors and skips; PostgreSQL runs completed without failures/skips. Fixture manifests use the existing strict-validation exceptions for deliberate pins (`--no-check-all --no-check-publish`); baseline uses normal strict validation. Cached lock reuse is not a new dependency resolution/audit or proof of absence of historical advisories.
+
+Additional main-checkout executions: new completion tests passed separately on SQLite and PostgreSQL, **32 tests / 202 assertions** each; the PostgreSQL focused run enabled exception arguments. The full baseline SQLite suite passed **470 / 3,588**, and the PostgreSQL credential/concurrency suite passed **174 / 1,273**. PHPStan, package-wide Pint, Composer strict validation/platform checks, Python AST syntax, diff and new-file whitespace checks passed. No historical totals were inferred as current results.
+
+Tests cover fresh check despite a prior positive decision, exact mapping/proof/target binding, uncommitted-stage nonuse, no promotion without confirmation, wrong bindings/context/purpose, denial/401/403/5xx/redirect/malformed body, expiry/cancellation/deletion, necessary rotation, unchanged deadlines, replay, forged tickets, reentrant losers, real committed-write acknowledgement loss/outage and read-only reconciliation. Independent processes pause immediately before the real claim CAS on both engines; exactly one confirmer may create a mapping/check, and the loser cannot damage its result. A worker exits after local commit: link_binding remains unusable and repeatable exact-attempt host abort plus SDK cleanup erases credentials. Existing refresh, deterministic cleanup/completion race, binding, credential-race, login and disclosure regressions remain in the full suites; none is skipped or weakened.
+
+An initial focused test failed because the test host omitted its intended target-account eligibility check; fixture validation was strengthened and all final runs passed. The original PostgreSQL listener bind was denied by Windows; the isolated cluster started successfully on alternate loopback port 55443. Direct temporary-directory command launches failed; launching the runner through Python's explicit temporary working directory succeeded. These startup/development failures are not passing validation evidence.
+
+Evidence: `%TEMP%/doxa-pending-link-9643b58z/matrix.log`, `sdk/.compatibility/managed-credentials/results.json`, per-profile logs/JUnit and `preservation-audit.json`. The audit confirms 1,803 pre-existing repository compatibility/document files unchanged and identical runtime/test/config/tooling inputs between checkout and matrix. Generated evidence remains outside the repository.
+
+## Deployment limits
+
+PostgreSQL and persistent SQLite remain the tested managed-store engines; MySQL/MariaDB is unsupported and fails readiness. No schema/migration, dependency, IAM, HRM, frontend or universal-contract change was needed. No arbitrary resource proxy, token getter, provider revocation or automatic local login was added. No live IAM/TLS integration, production host adapter, production recovery job, other PHP runtime or rehearsed backup restore was verified. Hosts must implement/test the durable claim, exact mapping uniqueness/conflicts, confirmation, commit proof, session ownership, compensation and receipt-persistence contract before deployment. Existing offline backup invalidation remains mandatory; automatic rollback detection is not provided. This is SDK completion infrastructure, not complete host/cross-language v1.3 conformance.
+
+# Historical integrated managed refresh lifecycle and application-access checking (checkpoint db0e1cc)
+
+Verified 2026-10-17 against committed Universal Contract v1.3 (59300ff), building on A (4340056), B1 (ce46fa8) and B2 (b01d1cf). These are current executions, not historical B2 results. At verification time the implementation was uncommitted; it is now checkpointed as db0e1cc. Complete v1.3 conformance was not claimed: pending-link confirmation/promotion and host mapping transactions remain deferred.
 
 ## Implementation and security boundary
 
@@ -46,7 +88,7 @@ Exploratory runs were not all passing: an obsolete API-absence assertion, PHPUni
 
 AC24-AC36 and relevant lifecycle/concurrency portions of AC37 are exercised with existing login requirements; AC37 linking confirmation/mapping and full cross-language v1.3 conformance are not claimed. HTTP responses are deterministic fakes, not live IAM/TLS/network recovery verification. PostgreSQL SQL/concurrency uses an isolated SDK database, not IAM/HRM. SQLite evidence covers independent local processes, not a network filesystem. Other PHP runtimes, production host integration and a rehearsed backup restore remain unverified.
 
-MySQL/MariaDB remains unsupported and fails managed readiness. No generic resource proxy, pending-link promotion, provider revocation, HRM mapping/session behavior or IAM change was added. The existing offline backup invalidation procedure remains mandatory; automatic rollback detection is not provided. Identity-only APIs and DoxaIdentity remain unchanged and need no managed table/key/adapter. Dependencies/migrations are unchanged. Repository compatibility artifacts and the four unrelated root documents are preserved. Nothing is staged, committed or pushed.
+MySQL/MariaDB remains unsupported and fails managed readiness. No generic resource proxy, pending-link promotion, provider revocation, HRM mapping/session behavior or IAM change was added. The existing offline backup invalidation procedure remains mandatory; automatic rollback detection is not provided. Identity-only APIs and DoxaIdentity remain unchanged and need no managed table/key/adapter. Dependencies/migrations are unchanged. Repository compatibility artifacts and the four unrelated root documents are preserved. No staging, commit or push occurred during that implementation run.
 
 # Historical B2 AC24 diagnostic disclosure correction
 

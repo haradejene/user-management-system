@@ -9,6 +9,7 @@ use Doxa\Laravel\Config\DoxaConfig;
 use Doxa\Laravel\Contracts\CredentialHostBinding;
 use Doxa\Laravel\Contracts\CredentialStore;
 use Doxa\Laravel\Contracts\ManagedTransactionStore;
+use Doxa\Laravel\Contracts\PendingLinkHostBinding;
 use Doxa\Laravel\Contracts\RefreshCredentialStore;
 use Doxa\Laravel\Discovery\ProviderMetadata;
 use Doxa\Laravel\Exceptions\ApplicationAccessException;
@@ -27,11 +28,75 @@ final class CredentialManager
      */
     private static ?\WeakMap $accessInvocations = null;
 
+    /** @var \WeakMap<object, array<string, mixed>>|null */
+    private static ?\WeakMap $linkInvocations = null;
+
+    /** No caller-supplied confirmation, target or access decision can authorize completion. */
+    public function completePendingLink(#[\SensitiveParameter] CredentialContext $context, #[\SensitiveParameter] Request $request, #[\SensitiveParameter] \Closure $discover): CredentialContext
+    {
+        $record = $this->owned($context, $request, 'complete_pending_link');
+        $services = $this->services();
+        $host = $services['host'];
+        $store = $services['store'];
+        if (! $host instanceof PendingLinkHostBinding || ! $store instanceof DatabaseCredentialStore) {
+            throw new CredentialException('credential_configuration_error');
+        }
+        $this->assertPendingCompletion($record);
+        $store->ready();
+        $ticket = new \stdClass;
+        self::$linkInvocations ??= new \WeakMap;
+        self::$linkInvocations[$ticket] = ['manager' => $this, 'store' => $store, 'context' => $context,
+            'host' => $host, 'request' => $request, 'expected' => $record,
+            'check' => function (string $attempt) use ($context, $request, $discover): ApplicationAccessDecision {
+                return $this->access($context, $request, $discover, $attempt);
+            },
+            'validate' => function (string $attempt) use ($context, $request): array {
+                $record = $this->owned($context, $request, 'complete_pending_link');
+                $this->assertPendingCompletion($record, $attempt);
+
+                return $record;
+            }];
+        try {
+            return $store->completePendingLink($this, $ticket);
+        } finally {
+            unset(self::$linkInvocations[$ticket]);
+        }
+    }
+
+    /** @return array<string, mixed> Internal one-use adapter handoff, not a completion proof DTO. */
+    public function consumeLinkInvocation(object $ticket, #[\SensitiveParameter] DatabaseCredentialStore $store): array
+    {
+        $invocation = self::$linkInvocations[$ticket] ?? null;
+        if ($invocation === null || $invocation['manager'] !== $this || $invocation['store'] !== $store) {
+            throw new CredentialException('incompatible_context');
+        }
+        unset(self::$linkInvocations[$ticket], $invocation['manager'], $invocation['store']);
+
+        return $invocation;
+    }
+
+    /** @param array<string, mixed> $record */
+    private function assertPendingCompletion(#[\SensitiveParameter] array $record, ?string $attempt = null): void
+    {
+        if ($record['purpose'] !== 'pending_link' || $record['owner'] !== null
+            || ! in_array($record['status'], ['pending_link', 'refreshing', 'checking', 'link_binding'], true)
+            || $record['expires_at'] <= time() || $record['absolute_expires_at'] <= time()
+            || ($record['policy']['host']['deadline'] ?? 0) <= time()
+            || ($record['completion']['attempt'] ?? null) !== $attempt) {
+            throw new CredentialException('incompatible_context');
+        }
+    }
+
     /** The only operation allowed for pending-link credentials. */
     public function checkApplicationAccess(#[\SensitiveParameter] CredentialContext $context, #[\SensitiveParameter] Request $request, #[\SensitiveParameter] \Closure $discover): ApplicationAccessDecision
     {
+        return $this->access($context, $request, $discover);
+    }
+
+    private function access(#[\SensitiveParameter] CredentialContext $context, #[\SensitiveParameter] Request $request, #[\SensitiveParameter] \Closure $discover, ?string $linkAttempt = null): ApplicationAccessDecision
+    {
         $record = $this->owned($context, $request, 'check_application_access');
-        $this->assertAccessRecord($context, $record);
+        $this->assertAccessRecord($context, $record, $linkAttempt);
         $store = $this->services()['store'];
         if (! $store instanceof DatabaseCredentialStore) {
             throw new ApplicationAccessException('credential_lifecycle_failure');
@@ -45,9 +110,9 @@ final class CredentialManager
         self::$accessInvocations ??= new \WeakMap;
         self::$accessInvocations[$ticket] = ['manager' => $this, 'store' => $store,
             'context' => $context, 'config' => $this->config, 'provider' => $provider, 'margin' => $this->services()['margin'],
-            'validate' => function () use ($context, $request): array {
+            'validate' => function () use ($context, $request, $linkAttempt): array {
                 $record = $this->owned($context, $request, 'check_application_access');
-                $this->assertAccessRecord($context, $record);
+                $this->assertAccessRecord($context, $record, $linkAttempt);
 
                 return $record;
             }];
@@ -74,11 +139,14 @@ final class CredentialManager
     }
 
     /** @param array<string, mixed> $record */
-    private function assertAccessRecord(#[\SensitiveParameter] CredentialContext $context, #[\SensitiveParameter] array $record): void
+    private function assertAccessRecord(#[\SensitiveParameter] CredentialContext $context, #[\SensitiveParameter] array $record, ?string $linkAttempt = null): void
     {
         $pending = $record['purpose'] === 'pending_link' && $record['owner'] === null
             && ($record['policy']['host']['deadline'] ?? 0) > time();
         $ordinary = $record['purpose'] === 'ordinary' && $record['owner'] !== null && $context->confirms($record);
+        if (($record['completion']['attempt'] ?? null) !== $linkAttempt && ! $ordinary) {
+            throw new ApplicationAccessException('credential_busy');
+        }
         if ((! $pending && ! $ordinary) || $record['grant'] !== 'authorization_code'
             || ! in_array('openid', $record['scopes'], true)) {
             throw new ApplicationAccessException('incompatible_context');
@@ -290,7 +358,8 @@ final class CredentialManager
     {
         $context = CredentialContext::fromServerReference($reference);
         $record = $this->owned($context, $request, 'restore');
-        if (! in_array($record['status'], ['awaiting_binding', 'pending_link', 'active'], true) || $record['expires_at'] <= time()) {
+        if (! in_array($record['status'], ['awaiting_binding', 'pending_link', 'active'], true) || $record['expires_at'] <= time()
+            || ($record['purpose'] === 'pending_link' && isset($record['completion']))) {
             throw new CredentialException('credential_lifecycle_failure');
         }
 

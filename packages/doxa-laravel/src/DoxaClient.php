@@ -33,6 +33,18 @@ use Illuminate\Http\Request;
 
 final class DoxaClient
 {
+    /** Trusted host adapter supplies confirmation/mapping proof, never request IDs or flags. */
+    public function completePendingLink(#[\SensitiveParameter] CredentialContext $context): CredentialContext
+    {
+        try {
+            return $this->manager()->completePendingLink($context, $this->request, fn () => $this->discover());
+        } catch (CredentialException $error) {
+            throw new CredentialException($error->category);
+        } catch (\Throwable) {
+            throw new CredentialException('credential_binding_failure');
+        }
+    }
+
     public function checkApplicationAccess(#[\SensitiveParameter] CredentialContext $context): ApplicationAccessDecision
     {
         try {
