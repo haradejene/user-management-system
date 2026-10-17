@@ -1,3 +1,66 @@
+# B2 AC24 diagnostic disclosure correction
+
+Verified 2026-10-17 on the uncommitted B2 preparation. Both reported `var_export()` disclosures were reproduced by permanent sentinel regressions before the correction: the policy exported its configured client secret and the successful result exported access/refresh tokens. Those two tests initially failed as expected; they now pass without magic-method workarounds or secret-bearing wrappers.
+
+## Structural correction and internal API
+
+- `ManagedHttpPolicy` retains only the validated integer timeout copied from `DoxaConfig`; it stores no configuration reference, secret, response, callback or credential. All three timeout options still use the same value. TLS, redirect/cookie/debug prohibition, byte/deadline checks, stream closure and conservative error classification remain unchanged.
+- `ManagedTransportResult` contains only outcome/status/failure and, after successful validation, a `RefreshResponse` containing scope/expiry metadata. Its factories no longer accept or retain a raw body. No plaintext credential-bearing input is reachable through its properties, including recursively exported properties.
+- `inspectRefresh(receivedResponse, responseStartedAt, oldRefreshToken, trustedBinding, tokenStartedAt, safetyMargin)` reads the bounded body and invokes the unchanged strict parser within the same transient call, before closing the stream. Raw content is available for validation, then discarded rather than returned or retained. Parser errors become sanitized typed failures. `validatedRefresh()` retrieves only already-validated metadata and accepts no credentials. The former delayed `validateRefresh(...)` operation is removed from this uncommitted internal API and its call sites are updated. `inspect()` remains classification-only: it retains no body and cannot supply a validated refresh value. Callers requiring refresh validation must use `inspectRefresh()` in the original read pass.
+
+The object-graph fix does not depend on `__debugInfo()`, `__serialize()`, encryption, static secret caches or another body-bearing object. Existing protected result/parser JSON and PHP serialization prohibitions remain. The timeout-only policy can serialize/export only non-secret policy data. No sender, dispatch authority, credential handoff, store mutation, lazy refresh, resource API, access check or pending-link promotion was added. Milestone A/B1, identity-only APIs, parser rules, dependencies, schema, configuration and service registrations are unchanged.
+
+## Current executed checks
+
+PHP 8.2.12, Laravel 12.69.3 checked-in baseline, PHPUnit 11.5.56 and persistent SQLite 3.39.2:
+
+| Check | Actual result |
+| --- | --- |
+| Four disclosure/retention regressions in `ManagedHttpPolicyTest` | Passed: 4 tests / 66 assertions |
+| `php vendor/bin/phpunit --filter 'ManagedHttpPolicyTest\|ManagedRefreshMetadataTest\|RefreshResponseTest' --do-not-cache-result` | Passed: 73 tests / 414 assertions |
+| `php vendor/bin/phpunit --do-not-cache-result` | Passed: 393 tests / 2,670 assertions; includes existing login/callback, SQLite storage, binding/cleanup and B1 process/race regressions |
+| `php vendor/bin/phpstan analyse --no-progress` | Passed; no errors |
+| `php vendor/bin/pint --test` | Passed, package-wide |
+| `composer validate --strict` | Passed |
+| `composer check-platform-reqs` | Passed |
+| `git diff --check` and new-file whitespace checks | Passed |
+
+The permanent tests check distinctive client/access/refresh sentinels against `var_export()`, `print_r()` and recursive private-property inspection. They also exercise successful parsing, metadata-only inspection, malformed JSON, unexpected ID tokens, unchanged rotation, closed response streams, typed failure categories, JSON/PHP serialization guards and sanitized exception exports. Separate PHP subprocesses with exception arguments enabled cover both metadata-only outward errors and direct parser errors; direct parsing retains its sensitive-parameter trace protection. Existing B2 HTTP-error cases also check exported result graphs. The final baseline PHPUnit log is retained outside the repository at `%TEMP%\doxa-b2-ac24-m23dnsbj\baseline-phpunit.log`.
+
+Laravel 10/11, dependency-floor, PostgreSQL and the full five-profile matrix were not rerun. There was no live IAM call, production refresh dispatch or complete refresh lifecycle test. PostgreSQL and persistent SQLite remain the managed-store targets; MySQL/MariaDB remains unsupported. Earlier validation below is historical and does not establish that the pre-fix diagnostic graphs were safe. Compatibility artifacts and the four unrelated root documents are unchanged. Nothing was staged, committed or pushed.
+
+# Historical B2 preparation (before AC24 diagnostic correction)
+
+Verified 2026-10-17 on the committed B1 foundation (`ce46fa86c1745d76f216de064ccf57f0d8b786dd`). This is deliberately non-dispatchable preparation for contract v1.3 AC24, AC28, AC31 and AC33 and sections 20-23, not complete managed-refresh conformance.
+
+## Implemented boundary
+
+- `ProviderMetadata::assertManagedRefresh` requires explicitly advertised `refresh_token`, the configured issuer and compatible registered authentication method. Existing HTTPS/credential/fragment URL checks apply; trusted discovery may advertise a different HTTPS token origin. No new endpoint override is accepted. Refresh support remains optional for ordinary code login. Missing/unknown legacy refresh evidence fails closed for the new capability; existing baseline discovery requirements are unchanged.
+- `ManagedHttpPolicy` defines the existing bounded timeout (1-60 seconds), TLS verification, no redirects/cookies/debugging, streaming and a 262,144-byte body ceiling. Its only response operation inspects an already-received PSR response, closes the stream and rejects unsupported media types, invalid lengths, truncation, overdue/broken streams and redirects. It has no HTTP client, request builder, handler or send method. These are response/policy tests, not proof of network timeout enforcement.
+- `ManagedDispatchOutcome`, `ManagedTransportResult`, `RefreshFailure` and `RefreshResponseException` separate local non-dispatch, received HTTP headers and uncertainty. Generic network failure must be represented as uncertain; 5xx never proves rollback or permits retry. Recognized 400/401 `invalid_grant` and `invalid_client` are categorized without retaining provider descriptions or inventing precise causes. Result classifications are constructible data, never dispatch authority or proof of non-dispatch.
+- `RefreshResponse` strictly validates bounded JSON objects, nonempty typed tokens, case-insensitive Bearer, mandatory distinct rotated refresh token, integer `expires_in` in 1-2,147,483,647 and usability at the request-start-based expiry. The safety margin defaults to 60 seconds and accepts only 0-60. The immutable absolute context deadline must remain live and is preserved separately; access expiry never extends that deadline. Refresh expiry remains unknown (`null`), matching the inspected IAM response rather than decoding credentials or inventing provider lifetime.
+- Response scopes must be well-formed, unique and no broader than the prior grant/original ceiling. Omitted scope inherits the prior set; narrowing is accepted, including loss of `openid`, which cannot authorize a later operation requiring it. The original ceiling must preserve OIDC provenance. Optional issuer/client/subject metadata must match the trusted binding. Any `id_token` or `error` field in a success is rejected, even if null. Tokens are discarded by the parser after validation: its protected value exposes metadata only, has no token getter or persistence operation and cannot be serialized. The bounded input result retains no publicly accessible response body.
+
+B2 registers no production sender/service and adds no store mutation, credential acquisition, B1 state-machine change or use of `RefreshAttempt` as authority. Existing `Transport`, code exchange, callback, identity, dependencies, configuration and migrations are unchanged. No retry middleware is installed. B3 must supply the exclusively issued single-use dispatch authority, protected credential handoff, dedicated no-retry client, request construction/client authentication, durable coordination, terminal cleanup and same-attempt recovery before production sending can be connected. Reading a persisted `dispatched` phase is insufficient. No lazy refresh, resource requests, application-access operation or pending-link promotion is implemented.
+
+## Current executed checks
+
+PHP 8.2.12, Laravel 12.69.3 checked-in baseline, PHPUnit 11.5.56 and SQLite 3.39.2:
+
+| Check | Actual result |
+| --- | --- |
+| `php vendor/bin/phpunit --filter 'ManagedRefreshMetadataTest|RefreshResponseTest|ManagedHttpPolicyTest' --do-not-cache-result` | Passed: 69 tests / 320 assertions |
+| Final frozen-source `php vendor/bin/phpunit --do-not-cache-result` | Passed: 389 tests / 2,576 assertions; includes existing login/callback, persistent SQLite storage, binding, cleanup and B1 process/race regressions |
+| `php vendor/bin/phpstan analyse --no-progress` | Passed; no errors |
+| `php vendor/bin/pint --test` | Passed, package-wide |
+| `composer validate --strict` | Passed |
+| `composer check-platform-reqs` | Passed |
+| `git diff --check` and new-file whitespace inspection | Passed |
+
+The new tests cover optional refresh discovery through a real fixture login, unsafe endpoints, foreign HTTPS token origin, unknown legacy capability, response/status/body classification, token/scope/binding/expiry failures, rotation, serialization and separate-process traces with `zend.exception_ignore_args=0`. All HTTP responses are deterministic fixtures. Initial test development exposed unprotected test-helper arguments (corrected with sensitive-parameter boundaries), an unjustified query-URL rejection expectation (removed to preserve existing endpoint rules), and PHPStan findings concerning stream side effects and unused retained credentials. The final source explicitly marks stream reads impure, discards parsed credentials and denies unknown legacy capability. No assertions in pre-existing tests were changed or skipped.
+
+Laravel 10/11, dependency-floor, the five-profile matrix and PostgreSQL were not rerun for B2 preparation. Their earlier evidence below is historical, not current B2 validation. Laravel 10/11/12 and PHP ^8.2 constraints are unchanged. PostgreSQL and persistent SQLite remain the managed-store targets; MySQL/MariaDB remains unsupported. There was no live IAM request, real refresh dispatch, network-dispatch recovery test, production database operation or complete refresh lifecycle test. B1 store/schema/concurrency code was not changed. Existing compatibility artifacts and the four unrelated untracked root documents were preserved. Nothing was staged, committed or pushed.
+
 # Durable refresh coordination — Milestone B1
 
 B1 implements internal storage/lifecycle primitives against Universal Contract v1.3 sections 20–23, with storage-focused coverage for AC25–AC26, AC29–AC32 and AC36–AC37. It is not complete refresh or managed-capability conformance. No refresh HTTP exchange, lazy-refresh orchestration, resource request, application-access check, pending-link refresh/promotion, or IAM/HRM implementation is provided. Identity-only APIs and all existing tests remain unchanged.

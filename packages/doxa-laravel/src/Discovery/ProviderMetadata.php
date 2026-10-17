@@ -18,7 +18,19 @@ final readonly class ProviderMetadata
         public ?string $userInfoEndpoint,
         public array $scopes,
         public array $authMethods,
+        // Unknown/absent evidence in legacy serialized metadata is never refresh authority.
+        private ?bool $refreshSupported = null,
     ) {}
+
+    /** Readiness only: never authorizes dispatch or supplies credentials. */
+    public function assertManagedRefresh(#[\SensitiveParameter] DoxaConfig $config): void
+    {
+        if (($this->refreshSupported ?? false) !== true || $this->issuer !== $config->issuer
+            || ! in_array($config->authMethod, $this->authMethods, true)) {
+            throw new DiscoveryException('unsupported_provider_capability');
+        }
+        DoxaConfig::url($this->tokenEndpoint);
+    }
 
     /** @param array<string, mixed> $data */
     public static function fromArray(#[\SensitiveParameter] array $data, #[\SensitiveParameter] DoxaConfig $config): self
@@ -68,7 +80,8 @@ final readonly class ProviderMetadata
             }
 
             return new self($data['issuer'], $data['authorization_endpoint'], $data['token_endpoint'], $data['jwks_uri'],
-                $data['userinfo_endpoint'] ?? null, $data['scopes_supported'], $data['token_endpoint_auth_methods_supported']);
+                $data['userinfo_endpoint'] ?? null, $data['scopes_supported'], $data['token_endpoint_auth_methods_supported'],
+                in_array('refresh_token', $data['grant_types_supported'], true));
         } catch (DiscoveryException $exception) {
             throw $exception;
         } catch (\Throwable) {
