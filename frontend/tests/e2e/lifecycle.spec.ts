@@ -15,7 +15,7 @@ async function login(page: Page, email: string, password = "password", remember 
   await page.getByLabel("Password", { exact: true }).fill(password);
   await page.getByLabel("Keep me signed in").setChecked(remember);
   const authenticated = page.waitForResponse((r) => r.url().endsWith("/api/login"));
-  await page.getByRole("button", { name: "Login", exact: true }).click();
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
   const response = await authenticated;
   expect(response.status()).toBe(200);
   await expect(page).toHaveURL(/\/dashboard$/);
@@ -40,7 +40,7 @@ async function rejected(page: Page, expected: number) {
   await page.goto("/dashboard");
   expect((await me).status()).toBe(expected);
   await expect(page).toHaveURL(/\/login\?next=%2Fdashboard$/);
-  await expect(page.getByRole("button", { name: "Login", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Sign in", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Logout" })).not.toBeVisible();
   await expect(page.getByRole("navigation", { name: "Administration" })).not.toBeVisible();
 }

@@ -14,7 +14,7 @@ class EnsureAccountIsActive
 {
     public function handle(Request $request, Closure $next, ?string $context = null): Response
     {
-        if ($context === 'oauth' && ! $request->is('oauth/authorize', 'oauth/continue')) {
+        if ($context === 'oauth' && ! $request->is('oauth/authorize', 'oauth/continue', 'oauth/select-account', 'oauth/change-account')) {
             return $next($request);
         }
 

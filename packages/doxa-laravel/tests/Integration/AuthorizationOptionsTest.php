@@ -90,10 +90,25 @@ final class AuthorizationOptionsTest extends TestCase
     public static function unsupportedPrompts(): array
     {
         return array_map(static fn ($prompt) => [$prompt], [
-            '', 'none', 'consent', 'select_account', 'login select_account', 'login none', 'LOGIN',
+            '', 'none', 'consent', 'select_account consent', 'login select_account', 'login none', 'LOGIN',
             ' login', 'login ', 'arbitrary', 'login&redirect_uri=https://attacker.test',
             'login%26state%3Dattacker', "login\n", 'SENSITIVE-PROMPT',
         ]);
+    }
+
+    public function test_select_account_is_explicit_and_preserves_all_security_parameters(): void
+    {
+        $url = $this->h->client->beginLogin(AuthorizationOptions::selectAccount())->getTargetUrl();
+        parse_str(parse_url($url, PHP_URL_QUERY), $this->h->query);
+        $transaction = $this->h->transaction();
+        $authorization = new Authorization($this->h->discovery);
+        self::assertSame($authorization->url($transaction).'&prompt=select_account', $url);
+        self::assertSame($url, $authorization->url($transaction, new AuthorizationOptions('select_account')));
+        self::assertSame(1, preg_match_all('/(?:[?&])prompt=/', $url));
+        self::assertSame($transaction->state, $this->h->query['state']);
+        self::assertSame($transaction->nonce(), $this->h->query['nonce']);
+        self::assertSame('S256', $this->h->query['code_challenge_method']);
+        self::assertSame('public-subject', $this->h->client->handleCallback($this->h->callback())->subject());
     }
 
     #[DataProvider('unsupportedPrompts')]

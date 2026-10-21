@@ -17,11 +17,38 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 class OAuthAuthorizationTest extends TestCase
 {
     use RefreshDatabase;
+
+    public static function proxyLoginRedirects(): array
+    {
+        return [
+            'trusted TLS proxy' => ['127.0.0.1', 'https', 'https'],
+            'untrusted spoofed TLS proxy' => ['192.0.2.10', 'https', 'http'],
+            'trusted direct HTTP' => ['127.0.0.1', null, 'http'],
+            'untrusted direct HTTP' => ['192.0.2.10', null, 'http'],
+        ];
+    }
+
+    #[DataProvider('proxyLoginRedirects')]
+    public function test_guest_authorization_login_redirect_only_trusts_the_loopback_proxy_scheme(
+        string $remoteAddress, ?string $forwardedProto, string $expectedScheme
+    ): void {
+        [, , $client] = $this->fixture();
+        $this->withServerVariables(['REMOTE_ADDR' => $remoteAddress]);
+        // Host and port already come from Host; forwarded overrides are untrusted.
+        $this->withHeaders(['X-Forwarded-Host' => 'attacker.example', 'X-Forwarded-Port' => '9443']);
+        if ($forwardedProto !== null) {
+            $this->withHeader('X-Forwarded-Proto', $forwardedProto);
+        }
+
+        $this->get('http://localhost:8443/oauth/authorize?'.http_build_query($this->authorizationQuery($client)))
+            ->assertRedirect($expectedScheme.'://localhost:8443/login');
+    }
 
     public function test_an_admin_can_register_a_pkce_authorization_code_client_for_an_application(): void
     {

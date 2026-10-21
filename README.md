@@ -43,6 +43,17 @@ npm run dev
 
 The frontend runs at `http://localhost:3000` and the API at `http://localhost:8000`.
 
+If you use a different API port, keep `NEXT_PUBLIC_API_URL` in
+`frontend/.env.local` and `APP_URL` in `backend/.env` aligned with the running
+server. For example, for port `8002`, set both to `http://localhost:8002` and run
+`php artisan serve --host=localhost --port=8002` from `backend`.
+`FRONTEND_URL` must match the browser's frontend origin (for example,
+`http://localhost:3000`), and `SANCTUM_STATEFUL_DOMAINS` must include its host and
+port (`localhost:3000`). After backend environment changes, run
+`php artisan config:clear`; restart Next.js after changing `.env.local`.
+A browser CORS error with a null status can mean the API server is unreachable;
+confirm the configured port is listening before changing CORS permissions.
+
 ## Initial audit logging
 
 Run `php artisan migrate` from `backend` to create `audit_logs`.

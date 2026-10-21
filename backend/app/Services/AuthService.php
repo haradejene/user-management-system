@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Enums\AccountStatus;
 use App\Events\IamActivityOccurred;
+use App\Http\Middleware\SelectOAuthAccount;
 use App\Models\User;
 use Illuminate\Auth\Events\Registered;
 use Illuminate\Http\Request;
@@ -33,6 +34,8 @@ class AuthService
 
         Auth::guard('web')->login($user);
         $request->session()->regenerate();
+
+        SelectOAuthAccount::authenticated($request);
 
         return $user;
     }
@@ -81,6 +84,7 @@ class AuthService
 
         $request->session()->regenerate();
         IamActivityOccurred::dispatch('auth.login', $user, actor: $user);
+        SelectOAuthAccount::authenticated($request);
 
         return $user;
     }

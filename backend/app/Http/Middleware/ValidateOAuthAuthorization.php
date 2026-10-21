@@ -46,6 +46,11 @@ class ValidateOAuthAuthorization
             return $next($request);
         }
 
+        $prompt = $request->query('prompt');
+        if ($request->query->has('prompt') && ! in_array($prompt, ['login', 'consent', 'none', 'select_account'], true)) {
+            return response()->json(['error' => 'invalid_request', 'error_description' => 'Unsupported prompt value or combination.'], 400);
+        }
+
         $clientId = $request->query('client_id');
         if (! Str::isUuid($clientId)) {
             return response()->json(['error' => 'invalid_client'], 400);

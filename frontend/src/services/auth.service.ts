@@ -7,6 +7,23 @@ async function initializeCsrf(): Promise<void> {
 }
 
 export const authService = {
+  async accountChoice(token: string): Promise<{application: string}> {
+    return (await apiClient.get<{application: string}>(`/oauth/account-choice/${encodeURIComponent(token)}`)).data;
+  },
+
+  async selectAccount(token: string, expectedEmail: string): Promise<string> {
+    await initializeCsrf();
+    const response = await apiClient.post<{redirect_url: string}>("/oauth/select-account", {
+      choice_token: token, choice: "current", expected_email: expectedEmail,
+    });
+    return response.data.redirect_url;
+  },
+
+  async cancelAccountChoice(token: string): Promise<string> {
+    await initializeCsrf();
+    const response = await apiClient.post<{redirect_url: string}>("/oauth/select-account", {choice_token: token, choice: "cancel"});
+    return response.data.redirect_url;
+  },
   async register(input: RegisterInput): Promise<AuthUser> {
     await initializeCsrf();
     const response = await apiClient.post<ApiResponse<AuthUser>>(

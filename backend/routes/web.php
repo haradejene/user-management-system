@@ -1,8 +1,10 @@
 <?php
 
 use App\Http\Controllers\Oidc\ApplicationAccessController;
+use App\Http\Controllers\Oidc\ChangeAccountController;
 use App\Http\Controllers\Oidc\DiscoveryController;
 use App\Http\Controllers\Oidc\JwksController;
+use App\Http\Controllers\Oidc\SelectAccountController;
 use App\Http\Controllers\Oidc\UserInfoController;
 use App\Http\Middleware\RequireApplicationAccessContext;
 use App\Http\Middleware\RequireOidcBearerToken;
@@ -28,6 +30,13 @@ Route::get('/oauth/application-access', ApplicationAccessController::class)
 Route::get('/', function () {
     return view('welcome');
 });
+
+Route::post('/oauth/select-account', SelectAccountController::class)
+    ->block(30, 30)->name('oauth.select-account');
+Route::get('/oauth/account-choice/{token}', [SelectAccountController::class, 'show'])
+    ->where('token', '[A-Za-z0-9]{64}')->name('oauth.account-choice');
+Route::post('/oauth/change-account', ChangeAccountController::class)
+    ->block(30, 30)->name('oauth.change-account');
 
 Route::get('/login', function (Request $request) {
     $frontend = rtrim((string) env('FRONTEND_URL', 'http://localhost:3000'), '/');

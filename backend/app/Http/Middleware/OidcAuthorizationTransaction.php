@@ -34,8 +34,10 @@ class OidcAuthorizationTransaction
         // Discard the obsolete single-slot format, never migrate an unbound nonce.
         $session->forget('oidc_authorization_transaction');
         $pending = $session->get(self::SESSION_KEY, []);
+        $expired = [];
         foreach ($pending as $token => $transaction) {
             if (($transaction['expires_at'] ?? 0) <= time()) {
+                $expired[] = $token;
                 unset($pending[$token]);
             }
         }
@@ -45,6 +47,24 @@ class OidcAuthorizationTransaction
             $activeToken = $session->get('authToken');
             $token = $request->input('auth_token');
             $transaction = is_string($token) ? ($pending[$token] ?? null) : null;
+            // A browser can restore an old consent page after it was consumed,
+            // expired, or its session changed. CSRF has already run. Never
+            // reconstruct a callback from that stale page or authorize it.
+            if ($request->isMethod('DELETE') && (! is_string($token)
+                || in_array($token, $expired, true)
+                || ($transaction && (($transaction['consent_token'] ?? null) !== $token
+                    || ! is_string($transaction['auth_request'] ?? null)))
+                || (! $transaction && ($activeToken !== $token || ! is_string($session->get('authRequest')))))) {
+                if (is_string($token)) {
+                    $session->forget(self::SESSION_KEY.'.'.$token);
+                }
+                if (is_string($token) && $activeToken === $token) {
+                    $session->forget(['authToken', 'authRequest']);
+                }
+
+                return response()->view('oauth.cancelled', [], 410)
+                    ->header('Cache-Control', 'no-store')->header('Referrer-Policy', 'no-referrer');
+            }
             if ($transaction && ($transaction['consent_token'] ?? null) !== $token) {
                 $session->forget(self::SESSION_KEY.'.'.$token);
                 throw InvalidAuthTokenException::different();
@@ -80,6 +100,7 @@ class OidcAuthorizationTransaction
                 $session->put(self::SESSION_KEY.'.'.$token, [
                     'consent_token' => $token,
                     'metadata' => $metadata,
+                    'query' => $request->query(),
                     'auth_request' => $session->get('authRequest'),
                     'expires_at' => time() + 600,
                 ]);

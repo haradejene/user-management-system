@@ -13,7 +13,7 @@ final readonly class AuthorizationOptions
 
     public function __construct(#[\SensitiveParameter] ?string $prompt = null)
     {
-        if ($prompt !== null && $prompt !== 'login') {
+        if ($prompt !== null && ! in_array($prompt, ['login', 'select_account'], true)) {
             throw new AuthorizationException('unsupported_authorization_option');
         }
         $this->prompt = $prompt;
@@ -22,5 +22,10 @@ final readonly class AuthorizationOptions
     public static function reauthenticate(): self
     {
         return new self('login');
+    }
+
+    public static function selectAccount(): self
+    {
+        return new self('select_account');
     }
 }

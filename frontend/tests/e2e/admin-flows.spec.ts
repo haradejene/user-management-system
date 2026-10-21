@@ -17,7 +17,7 @@ test("administrator manages users, companies, applications, and application acce
   await initialSessionCheck;
   await page.getByLabel("Email").fill("admin@central-iam.test");
   await page.getByLabel("Password").fill("password");
-  await page.getByRole("button", { name: "Login" }).click();
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(page).toHaveURL(/\/dashboard$/);
   await expect(page.getByText("Central IAM administration overview.")).toBeVisible();
 

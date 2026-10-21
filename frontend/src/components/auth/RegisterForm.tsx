@@ -11,11 +11,13 @@ import { Button } from "@/components/ui/Button";
 import { useAuth } from "@/hooks/useAuth";
 import { registerSchema, type RegisterFormValues } from "@/schemas/auth";
 import { getApiErrorMessage } from "@/services/api-client";
+import { rememberAccount } from "@/services/remembered-accounts";
 
 export function RegisterForm() {
   const { register: registerUser } = useAuth();
   const router = useRouter();
   const [requestError, setRequestError] = useState<string | null>(null);
+  const [rememberOnBrowser, setRememberOnBrowser] = useState(false);
   const {
     formState: { errors, isSubmitting },
     handleSubmit,
@@ -33,7 +35,8 @@ export function RegisterForm() {
   async function onSubmit(values: RegisterFormValues): Promise<void> {
     setRequestError(null);
     try {
-      await registerUser(values);
+      const registered = await registerUser(values);
+      if (rememberOnBrowser) rememberAccount(registered);
       router.replace("/dashboard");
       router.refresh();
     } catch (error) {
@@ -43,6 +46,7 @@ export function RegisterForm() {
 
   return (
     <form className="space-y-4" onSubmit={handleSubmit(onSubmit)} noValidate>
+      <label className="flex items-start gap-2 text-sm text-slate-600"><input type="checkbox" className="mt-1 size-4" checked={rememberOnBrowser} onChange={event => setRememberOnBrowser(event.target.checked)} /><span>Remember this account on this browser <span className="block text-xs">Saves your name and email for 30 days. Avoid this on shared devices.</span></span></label>
       {requestError ? <Alert>{requestError}</Alert> : null}
       <FormField
         label="Name"
