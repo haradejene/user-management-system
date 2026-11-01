@@ -13,6 +13,7 @@ export function ApplicationOverview({ application }: { application: Application 
         ["Application name", application.name], ["Slug", application.slug],
         ["Description", application.description || "No description."],
         ["Status", <StatusBadge key="status" status={application.status} />],
+        ["Assigned company", application.company ? application.company.name : "None (Global application)"],
         ["Created", applicationDate(application.created_at)], ["Updated", applicationDate(application.updated_at)],
         ["Public application ID", application.id],
       ].map(([label, value]) => <div key={String(label)}><dt className="text-sm text-slate-500">{label}</dt><dd className="mt-1 break-words text-sm text-slate-900">{value}</dd></div>)}

@@ -24,6 +24,7 @@ class UpdateApplicationRequest extends FormRequest
     public function rules(): array
     {
         return [
+            'company_id' => ['sometimes', 'nullable', 'string', 'exists:companies,public_id'],
             'name' => ['sometimes', 'required', 'string', 'max:255'],
             'slug' => [
                 'sometimes',

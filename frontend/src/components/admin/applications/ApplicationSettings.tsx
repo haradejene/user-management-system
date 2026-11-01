@@ -7,28 +7,45 @@ import { FormField } from "@/components/forms/FormField";
 import { Alert } from "@/components/ui/Alert";
 import { Button } from "@/components/ui/Button";
 import { applicationsService } from "@/services/applications.service";
+import { companiesService } from "@/services/companies.service";
 import { getApiErrorMessage } from "@/services/api-client";
 import type { Application } from "@/types/application";
+import type { Company } from "@/types/company";
 import type { ValidationErrorResponse } from "@/types/api";
 
 export function ApplicationSettings({ application, onChanged }: { application: Application; onChanged: (application: Application) => void }) {
   const [name, setName] = useState(application.name);
   const [slug, setSlug] = useState(application.slug);
   const [description, setDescription] = useState(application.description ?? "");
+  const [companyId, setCompanyId] = useState(application.company_id ?? application.company?.id ?? "");
+  const [companies, setCompanies] = useState<Company[]>([]);
   const [busy, setBusy] = useState(false);
   const [confirm, setConfirm] = useState(false);
   const [errors, setErrors] = useState<Record<string, string[]>>({});
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const mounted = useRef(true);
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+
+  useEffect(() => {
+    mounted.current = true;
+    companiesService.list("", 1, 100).then((res) => {
+      if (mounted.current) setCompanies(res.data);
+    }).catch(() => {});
+    return () => { mounted.current = false; };
+  }, []);
 
   async function submit(event: React.FormEvent) {
     event.preventDefault(); setBusy(true); setErrors({}); setError(null); setSuccess(null);
     try {
-      const updated = await applicationsService.update(application.id, { name, slug, description: description || null });
+      const updated = await applicationsService.update(application.id, {
+        name,
+        slug,
+        description: description || null,
+        company_id: companyId || null,
+      });
       if (!mounted.current) return;
       onChanged(updated); setName(updated.name); setSlug(updated.slug); setDescription(updated.description ?? "");
+      setCompanyId(updated.company_id ?? updated.company?.id ?? "");
       setSuccess("Application settings saved.");
     } catch (e) {
       if (!mounted.current) return;
@@ -57,6 +74,28 @@ export function ApplicationSettings({ application, onChanged }: { application: A
         <fieldset disabled={busy} className="max-w-xl space-y-5">
           <FormField name="name" label="Name" required maxLength={255} value={name} error={errors.name?.[0]} onChange={(e) => { setName(e.target.value); setSuccess(null); }} />
           <FormField name="slug" label="Slug" required maxLength={100} value={slug} error={errors.slug?.[0]} onChange={(e) => { setSlug(e.target.value); setSuccess(null); }} />
+          <div>
+            <label htmlFor="company_id" className="mb-1.5 block text-sm font-medium text-slate-700">
+              Assigned Company
+            </label>
+            <select
+              id="company_id"
+              name="company_id"
+              value={companyId}
+              onChange={(e) => { setCompanyId(e.target.value); setSuccess(null); }}
+              className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+            >
+              <option value="">No company assigned (Global application)</option>
+              {companies.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1.5 text-xs text-slate-500">
+              When assigned to a company, active company employees are granted access to this application by default. You can revoke access individually.
+            </p>
+          </div>
           <div className="space-y-1.5"><label htmlFor="description" className="block text-sm font-medium text-slate-700">Description</label><textarea id="description" name="description" maxLength={5000} value={description} aria-invalid={Boolean(errors.description)} aria-describedby={errors.description ? "description-error" : undefined} onChange={(e) => { setDescription(e.target.value); setSuccess(null); }} className="min-h-28 w-full rounded-md border border-slate-300 p-3" />{errors.description ? <p id="description-error" className="text-sm text-red-600">{errors.description[0]}</p> : null}</div>
           <Button type="submit" isLoading={busy}>Save application</Button>
         </fieldset>

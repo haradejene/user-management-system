@@ -24,6 +24,7 @@ class StoreApplicationRequest extends FormRequest
     public function rules(): array
     {
         return [
+            'company_id' => ['nullable', 'string', 'exists:companies,public_id'],
             'name' => ['required', 'string', 'max:255'],
             'slug' => ['required', 'string', 'max:100', 'regex:/^[a-z0-9]+(?:-[a-z0-9]+)*$/', 'unique:applications,slug'],
             'description' => ['nullable', 'string', 'max:5000'],

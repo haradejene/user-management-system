@@ -6,6 +6,12 @@ export interface Application {
   slug: string;
   description: string | null;
   status: ApplicationStatus;
+  company_id?: string | null;
+  company?: {
+    id: string;
+    name: string;
+    status: string;
+  } | null;
   created_at: string | null;
   updated_at: string | null;
 }

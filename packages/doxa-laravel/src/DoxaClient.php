@@ -9,8 +9,10 @@ use Doxa\Laravel\Authorization\AuthorizationOptions;
 use Doxa\Laravel\Authorization\BrowserContext;
 use Doxa\Laravel\Authorization\Callback;
 use Doxa\Laravel\Config\DoxaConfig;
+use Doxa\Laravel\Contracts\AccountResolver;
 use Doxa\Laravel\Contracts\ManagedTransactionStore;
 use Doxa\Laravel\Contracts\TransactionStore;
+use Doxa\Laravel\Contracts\Transport;
 use Doxa\Laravel\Credentials\ApplicationAccessDecision;
 use Doxa\Laravel\Credentials\CredentialContext;
 use Doxa\Laravel\Credentials\CredentialManager;
@@ -24,10 +26,12 @@ use Doxa\Laravel\Exceptions\CredentialException;
 use Doxa\Laravel\Exceptions\DoxaException;
 use Doxa\Laravel\Exceptions\ExpiredTransactionException;
 use Doxa\Laravel\Exceptions\ProviderDeniedException;
+use Doxa\Laravel\Http\GuzzleTransport;
 use Doxa\Laravel\Identity\DoxaIdentity;
 use Doxa\Laravel\Oidc\IdTokenValidator;
 use Doxa\Laravel\Oidc\UserInfo;
 use Doxa\Laravel\Token\CodeExchange;
+use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 
@@ -67,6 +71,7 @@ final class DoxaClient
         private readonly UserInfo $userInfo,
         private readonly Request $request,
         private readonly ?CredentialManager $credentials = null,
+        private readonly ?Transport $accessTransport = null,
     ) {}
 
     public function discover(): ProviderMetadata
@@ -103,6 +108,23 @@ final class DoxaClient
         }
 
         return $result;
+    }
+
+    /** Opt-in identity-only login: a fresh client-bound access decision precedes any host resolution. */
+    public function handleAuthorizedCallback(#[\SensitiveParameter] Request $request): DoxaIdentity
+    {
+        $result = $this->callback(Callback::parse($request), $request, false, true);
+        if (! $result instanceof DoxaIdentity) {
+            throw new AuthorizationException('authorization_error');
+        }
+
+        return $result;
+    }
+
+    /** The host controls mapping, provisioning and lifecycle. The SDK never logs in a local account. */
+    public function resolveAccount(#[\SensitiveParameter] Request $request, AccountResolver $resolver): ?Authenticatable
+    {
+        return $resolver->resolve($this->handleAuthorizedCallback($request));
     }
 
     public function beginManagedLogin(#[\SensitiveParameter] ManagedLoginPolicy $policy, #[\SensitiveParameter] ?AuthorizationOptions $options = null): RedirectResponse
@@ -180,7 +202,7 @@ final class DoxaClient
         return $this->credentials ?? throw new CredentialException('credential_configuration_error');
     }
 
-    private function callback(#[\SensitiveParameter] Callback $callback, #[\SensitiveParameter] Request $request, bool $managed): DoxaIdentity|ManagedLoginResult
+    private function callback(#[\SensitiveParameter] Callback $callback, #[\SensitiveParameter] Request $request, bool $managed, bool $requireAccess = false): DoxaIdentity|ManagedLoginResult
     {
         $transaction = $this->transactions->claim($callback->state, $this->browser->binding($request));
         $success = false;
@@ -204,6 +226,19 @@ final class DoxaClient
             }
             $tokens = $this->exchange->exchange($callback->code ?? '', $transaction);
             $identity = DoxaIdentity::authenticate($this->validator, $tokens->idToken(), $transaction);
+            if ($requireAccess) {
+                try {
+                    // Fixed issuer-relative endpoint. No caller-supplied URL or retained credentials.
+                    $access = ($this->accessTransport ?? new GuzzleTransport($this->config))->request('GET',
+                        rtrim($this->config->issuer, '/').'/oauth/application-access',
+                        ['headers' => ['Accept' => 'application/json', 'Authorization' => 'Bearer '.$tokens->accessToken()]]);
+                } catch (\Throwable) {
+                    throw new ApplicationAccessException('transient_service_failure');
+                }
+                if ($access->mediaType !== 'application/json' || $access->data() !== ['effective' => true]) {
+                    throw new ApplicationAccessException('access_denied_or_insufficient_scope');
+                }
+            }
             if ($this->config->userInfo) {
                 $identity = $identity->enriched($this->userInfo, $tokens, $transaction);
             }

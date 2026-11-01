@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Enums\ApplicationStatus;
 use App\Enums\MembershipStatus;
 use App\Events\IamActivityOccurred;
 use App\Models\Company;
@@ -52,6 +53,16 @@ class CompanyMembershipService
                 'status' => MembershipStatus::Active->value,
             ]);
 
+            // Automatically grant default access to all active applications belonging to this company
+            $companyApplications = $company->applications()->where('status', ApplicationStatus::Active->value)->get();
+            foreach ($companyApplications as $application) {
+                if (! $user->applications()->whereKey($application->id)->exists()) {
+                    $user->applications()->attach($application->id, [
+                        'status' => MembershipStatus::Active->value,
+                    ]);
+                }
+            }
+
             IamActivityOccurred::dispatch('company.member_added', $user, ['company_id' => $company->public_id]);
 
             return $company->users()->whereKey($user->getKey())->firstOrFail();
@@ -69,6 +80,12 @@ class CompanyMembershipService
                 ]);
             }
             if ($company->users()->detach($user->getKey()) > 0) {
+                // Remove access from applications belonging to this company
+                $companyAppIds = $company->applications()->pluck('id');
+                if ($companyAppIds->isNotEmpty()) {
+                    $user->applications()->detach($companyAppIds);
+                }
+
                 IamActivityOccurred::dispatch('company.member_removed', $user, ['company_id' => $company->public_id]);
             }
         });

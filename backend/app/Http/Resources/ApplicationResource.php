@@ -16,6 +16,12 @@ class ApplicationResource extends JsonResource
             'slug' => $this->slug,
             'description' => $this->description,
             'status' => $this->status->value,
+            'company_id' => $this->company?->public_id,
+            'company' => $this->company ? [
+                'id' => $this->company->public_id,
+                'name' => $this->company->name,
+                'status' => $this->company->status->value,
+            ] : null,
             'created_at' => $this->created_at?->toISOString(),
             'updated_at' => $this->updated_at?->toISOString(),
         ];

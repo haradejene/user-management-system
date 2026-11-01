@@ -294,6 +294,129 @@ class ApplicationAccessManagementTest extends TestCase
         ]);
     }
 
+    public function test_creating_application_for_company_grants_access_to_all_active_members(): void
+    {
+        $admin = User::factory()->systemAdmin()->create();
+        $company = Company::factory()->create();
+        $user1 = User::factory()->create();
+        $user2 = User::factory()->create();
+        $inactiveUser = User::factory()->create(['status' => AccountStatus::Inactive]);
+
+        $company->users()->attach([$user1->id, $user2->id, $inactiveUser->id], ['status' => MembershipStatus::Active->value]);
+
+        $response = $this->actingAs($admin)
+            ->postJson('/api/admin/applications', [
+                'name' => 'Internal Portal',
+                'slug' => 'internal-portal',
+                'company_id' => $company->public_id,
+            ])
+            ->assertCreated();
+
+        $appId = Application::where('slug', 'internal-portal')->first()->id;
+
+        $this->assertDatabaseHas('application_user', [
+            'user_id' => $user1->id,
+            'application_id' => $appId,
+            'status' => 'active',
+        ]);
+        $this->assertDatabaseHas('application_user', [
+            'user_id' => $user2->id,
+            'application_id' => $appId,
+            'status' => 'active',
+        ]);
+        // Inactive user account is not granted access
+        $this->assertDatabaseMissing('application_user', [
+            'user_id' => $inactiveUser->id,
+            'application_id' => $appId,
+        ]);
+    }
+
+    public function test_adding_user_to_company_grants_access_to_company_applications(): void
+    {
+        $admin = User::factory()->systemAdmin()->create();
+        $company = Company::factory()->create();
+        $app1 = Application::factory()->create(['company_id' => $company->id]);
+        $app2 = Application::factory()->create(['company_id' => $company->id]);
+        $otherApp = Application::factory()->create(); // unassigned to company
+
+        $user = User::factory()->create();
+
+        $this->actingAs($admin)
+            ->postJson("/api/admin/companies/{$company->public_id}/members", [
+                'user_id' => $user->public_id,
+            ])
+            ->assertCreated();
+
+        $this->assertDatabaseHas('application_user', ['user_id' => $user->id, 'application_id' => $app1->id]);
+        $this->assertDatabaseHas('application_user', ['user_id' => $user->id, 'application_id' => $app2->id]);
+        $this->assertDatabaseMissing('application_user', ['user_id' => $user->id, 'application_id' => $otherApp->id]);
+
+        $this->assertTrue($user->hasAccessToApplication($app1));
+        $this->assertTrue($user->hasAccessToApplication($app2));
+        $this->assertFalse($user->hasAccessToApplication($otherApp));
+    }
+
+    public function test_admin_can_revoke_user_access_from_company_application(): void
+    {
+        $admin = User::factory()->systemAdmin()->create();
+        $company = Company::factory()->create();
+        $app = Application::factory()->create(['company_id' => $company->id]);
+        $user = User::factory()->create();
+
+        // Add user to company (which auto-grants application access)
+        $this->actingAs($admin)
+            ->postJson("/api/admin/companies/{$company->public_id}/members", [
+                'user_id' => $user->public_id,
+            ])
+            ->assertCreated();
+
+        $this->assertTrue($user->hasAccessToApplication($app));
+
+        // Revoke user's access to the application
+        $this->actingAs($admin)
+            ->deleteJson("/api/admin/users/{$user->public_id}/applications/{$app->public_id}")
+            ->assertNoContent();
+
+        $this->assertFalse($user->hasAccessToApplication($app));
+        $this->assertDatabaseMissing('application_user', [
+            'user_id' => $user->id,
+            'application_id' => $app->id,
+        ]);
+
+        // User is still a member of the company!
+        $this->assertDatabaseHas('company_user', [
+            'user_id' => $user->id,
+            'company_id' => $company->id,
+        ]);
+    }
+
+    public function test_removing_user_from_company_revokes_company_applications(): void
+    {
+        $admin = User::factory()->systemAdmin()->create();
+        $company = Company::factory()->create();
+        $app = Application::factory()->create(['company_id' => $company->id]);
+        $user = User::factory()->create();
+
+        $this->actingAs($admin)
+            ->postJson("/api/admin/companies/{$company->public_id}/members", [
+                'user_id' => $user->public_id,
+            ])
+            ->assertCreated();
+
+        $this->assertTrue($user->hasAccessToApplication($app));
+
+        // Remove from company
+        $this->actingAs($admin)
+            ->deleteJson("/api/admin/companies/{$company->public_id}/members/{$user->public_id}")
+            ->assertNoContent();
+
+        $this->assertFalse($user->hasAccessToApplication($app));
+        $this->assertDatabaseMissing('application_user', [
+            'user_id' => $user->id,
+            'application_id' => $app->id,
+        ]);
+    }
+
     public function test_targeted_assignment_lookup_finds_assignments_outside_the_unfiltered_page(): void
     {
         $admin = User::factory()->systemAdmin()->create();

@@ -12,6 +12,7 @@ use App\Http\Controllers\Auth\RegisterController;
 use App\Http\Controllers\Companies\CompanyController;
 use App\Http\Controllers\Companies\CompanyMembershipController;
 use App\Http\Controllers\Companies\CompanyStatusController;
+use App\Http\Controllers\Developers\SdkDownloadController;
 use App\Http\Controllers\Users\ProfileController;
 use App\Http\Controllers\Users\UserController;
 use App\Http\Controllers\Users\UserStatusController;
@@ -19,6 +20,12 @@ use Illuminate\Support\Facades\Route;
 
 Route::post('/register', RegisterController::class)->middleware('throttle:register');
 Route::post('/login', LoginController::class)->middleware('throttle:login');
+
+Route::prefix('developers')->group(function (): void {
+    Route::get('/sdks', [SdkDownloadController::class, 'index']);
+    Route::get('/sdks/{framework}/download', [SdkDownloadController::class, 'download']);
+    Route::get('/diagnostics', [SdkDownloadController::class, 'diagnostics'])->middleware(['auth:sanctum', 'active']);
+});
 
 Route::middleware('auth:sanctum')->group(function (): void {
     Route::post('/logout', LogoutController::class);

@@ -2,9 +2,12 @@
 
 namespace App\Services;
 
+use App\Enums\AccountStatus;
 use App\Enums\ApplicationStatus;
+use App\Enums\MembershipStatus;
 use App\Events\IamActivityOccurred;
 use App\Models\Application;
+use App\Models\Company;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
@@ -15,6 +18,7 @@ class ApplicationService
     public function paginate(array $filters): LengthAwarePaginator
     {
         return Application::query()
+            ->with('company')
             ->when($filters['search'] ?? null, function (Builder $query, string $search): void {
                 $query->where(function (Builder $query) use ($search): void {
                     $query->where('name', 'like', "%{$search}%")
@@ -28,22 +32,61 @@ class ApplicationService
             ->withQueryString();
     }
 
-    /** @param array{name: string, slug: string, description?: string|null} $attributes */
+    /** @param array{company_id?: string|int|null, name: string, slug: string, description?: string|null} $attributes */
     public function create(array $attributes): Application
     {
         return DB::transaction(function () use ($attributes): Application {
+            if (array_key_exists('company_id', $attributes) && is_string($attributes['company_id'])) {
+                $company = Company::where('public_id', $attributes['company_id'])->first();
+                $attributes['company_id'] = $company?->id;
+            }
+
             $application = Application::query()->create($attributes);
             IamActivityOccurred::dispatch('application.created', $application);
 
-            return $application;
+            if ($application->company_id) {
+                $company = Company::find($application->company_id);
+                if ($company) {
+                    $members = $company->users()->where('users.status', AccountStatus::Active->value)->get();
+                    foreach ($members as $member) {
+                        if (! $member->applications()->whereKey($application->id)->exists()) {
+                            $member->applications()->attach($application->id, [
+                                'status' => MembershipStatus::Active->value,
+                            ]);
+                        }
+                    }
+                }
+            }
+
+            return $application->load('company');
         });
     }
 
-    /** @param array{name?: string, slug?: string, description?: string|null} $attributes */
+    /** @param array{company_id?: string|int|null, name?: string, slug?: string, description?: string|null} $attributes */
     public function update(Application $application, array $attributes): Application
     {
         return DB::transaction(function () use ($application, $attributes): Application {
+            if (array_key_exists('company_id', $attributes) && is_string($attributes['company_id'])) {
+                $company = Company::where('public_id', $attributes['company_id'])->first();
+                $attributes['company_id'] = $company?->id;
+            }
+
+            $previousCompanyId = $application->company_id;
             $application->update($attributes);
+
+            if ($application->company_id && $application->company_id !== $previousCompanyId) {
+                $company = Company::find($application->company_id);
+                if ($company) {
+                    $members = $company->users()->where('users.status', AccountStatus::Active->value)->get();
+                    foreach ($members as $member) {
+                        if (! $member->applications()->whereKey($application->id)->exists()) {
+                            $member->applications()->attach($application->id, [
+                                'status' => MembershipStatus::Active->value,
+                            ]);
+                        }
+                    }
+                }
+            }
 
             $changed = array_keys($application->getChanges());
             $changed = array_values(array_diff($changed, ['updated_at', 'remember_token']));
@@ -51,7 +94,7 @@ class ApplicationService
                 IamActivityOccurred::dispatch('application.updated', $application, ['changed_fields' => $changed]);
             }
 
-            return $application->refresh();
+            return $application->refresh()->load('company');
         });
     }
 

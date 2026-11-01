@@ -3,7 +3,7 @@ import type { ApiResponse, PaginatedResponse } from "@/types/api";
 import type { Application, ApplicationAccess, ApplicationStatus, ApplicationUser } from "@/types/application";
 import type { OAuthClient, OAuthClientCreation, OAuthClientInput } from "@/types/oauth-client";
 
-export interface ApplicationInput { name: string; slug: string; description?: string | null }
+export interface ApplicationInput { name: string; slug: string; description?: string | null; company_id?: string | null }
 
 export const applicationsService = {
   async updateOAuthRedirects(application: string, client: string, redirect_uris: string[], updated_at: string | null): Promise<OAuthClient> {
