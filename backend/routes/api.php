@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Applications\AdminOAuthRequestController;
 use App\Http\Controllers\Applications\ApplicationAccessController;
 use App\Http\Controllers\Applications\ApplicationAuditController;
 use App\Http\Controllers\Applications\ApplicationController;
@@ -12,6 +13,7 @@ use App\Http\Controllers\Auth\RegisterController;
 use App\Http\Controllers\Companies\CompanyController;
 use App\Http\Controllers\Companies\CompanyMembershipController;
 use App\Http\Controllers\Companies\CompanyStatusController;
+use App\Http\Controllers\Developers\PublicOAuthRequestController;
 use App\Http\Controllers\Developers\SdkDownloadController;
 use App\Http\Controllers\Users\ProfileController;
 use App\Http\Controllers\Users\UserController;
@@ -25,6 +27,9 @@ Route::prefix('developers')->group(function (): void {
     Route::get('/sdks', [SdkDownloadController::class, 'index']);
     Route::get('/sdks/{framework}/download', [SdkDownloadController::class, 'download']);
     Route::get('/diagnostics', [SdkDownloadController::class, 'diagnostics'])->middleware(['auth:sanctum', 'active']);
+    Route::get('/companies', [PublicOAuthRequestController::class, 'companies']);
+    Route::post('/oauth-requests', [PublicOAuthRequestController::class, 'store'])->middleware('throttle:20,1');
+    Route::get('/oauth-requests/{reference}', [PublicOAuthRequestController::class, 'show']);
 });
 
 Route::middleware('auth:sanctum')->group(function (): void {
@@ -65,4 +70,10 @@ Route::prefix('admin')
         Route::delete('users/{user:public_id}/applications/{application:public_id}', [ApplicationAccessController::class, 'destroy']);
         Route::get('applications/{application:public_id}/users', [ApplicationAccessController::class, 'forApplication']);
         Route::get('applications/{application:public_id}/history', ApplicationAuditController::class);
+
+        Route::get('oauth-requests', [AdminOAuthRequestController::class, 'index']);
+        Route::get('oauth-requests/stats', [AdminOAuthRequestController::class, 'stats']);
+        Route::get('oauth-requests/{oauthApplicationRequest:public_id}', [AdminOAuthRequestController::class, 'show']);
+        Route::post('oauth-requests/{oauthApplicationRequest:public_id}/approve', [AdminOAuthRequestController::class, 'approve']);
+        Route::post('oauth-requests/{oauthApplicationRequest:public_id}/reject', [AdminOAuthRequestController::class, 'reject']);
     });

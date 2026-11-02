@@ -1,53 +1,22 @@
 import { apiClient } from "./api-client";
 
-export interface SdkMetadata {
-  framework: "laravel" | "node" | "django";
-  name: string;
-  language: string;
-  runtime: string;
-  package_name: string;
-  supported_versions: string;
-  version: string;
-  install_command: string;
-  download_url: string;
-  contract_version: string;
-  description: string;
-  features: string[];
-  env_template: Record<string, string>;
-}
-
-export interface ClientAppSummary {
-  id: string;
-  name: string;
-  slug: string;
-  description: string | null;
-  clients: {
-    client_id: string;
-    name: string;
-    redirect_uris: string[];
-    confidential: boolean;
-  }[];
-}
-
-export interface DiagnosticsMetadata {
-  issuer: string;
-  status: "healthy" | "degraded";
-  contract_version: string;
-  endpoints: {
-    discovery: string;
-    jwks: string;
-    authorization: string;
-    token: string;
-    userinfo: string;
-    application_access: string;
-  };
-  requirements: Record<string, string>;
-  applications: ClientAppSummary[];
-}
+export * from "@/types/developers";
+import type {
+  DeveloperCompanyOption,
+  DiagnosticsMetadata,
+  OAuthApplicationRequestDetail,
+  OAuthApplicationRequestInput,
+  SdkMetadata,
+} from "@/types/developers";
 
 export const developersService = {
   async getSdks(): Promise<SdkMetadata[]> {
     const res = await apiClient.get<{ data: SdkMetadata[] }>("/api/developers/sdks");
+    return res.data.data;
+  },
+
+  async getCompanies(): Promise<DeveloperCompanyOption[]> {
+    const res = await apiClient.get<{ data: DeveloperCompanyOption[] }>("/api/developers/companies");
     return res.data.data;
   },
 
@@ -59,5 +28,27 @@ export const developersService = {
   getDownloadUrl(framework: string): string {
     const base = apiClient.defaults.baseURL ?? "http://localhost:8002";
     return `${base}/api/developers/sdks/${framework}/download`;
+  },
+
+  async submitOAuthRequest(
+    input: OAuthApplicationRequestInput
+  ): Promise<{ message: string; data: OAuthApplicationRequestDetail }> {
+    try {
+      await apiClient.get("/sanctum/csrf-cookie");
+    } catch {
+      // CSRF cookie lookup can fail silently in tests or decoupled hosts
+    }
+    const res = await apiClient.post<{ message: string; data: OAuthApplicationRequestDetail }>(
+      "/api/developers/oauth-requests",
+      input
+    );
+    return res.data;
+  },
+
+  async getOAuthRequestStatus(reference: string): Promise<OAuthApplicationRequestDetail> {
+    const res = await apiClient.get<{ data: OAuthApplicationRequestDetail }>(
+      `/api/developers/oauth-requests/${encodeURIComponent(reference.trim())}`
+    );
+    return res.data.data;
   },
 };

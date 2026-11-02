@@ -37,12 +37,15 @@ export function ApplicationSettings({ application, onChanged }: { application: A
   async function submit(event: React.FormEvent) {
     event.preventDefault(); setBusy(true); setErrors({}); setError(null); setSuccess(null);
     try {
-      const updated = await applicationsService.update(application.id, {
+      const payload: { name: string; slug: string; description: string | null; company_id?: string | null } = {
         name,
         slug,
         description: description || null,
-        company_id: companyId || null,
-      });
+      };
+      if (companyId || application.company_id !== undefined || application.company !== undefined) {
+        payload.company_id = companyId || null;
+      }
+      const updated = await applicationsService.update(application.id, payload);
       if (!mounted.current) return;
       onChanged(updated); setName(updated.name); setSlug(updated.slug); setDescription(updated.description ?? "");
       setCompanyId(updated.company_id ?? updated.company?.id ?? "");

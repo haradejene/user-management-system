@@ -26,11 +26,16 @@ export function getApiErrorMessage(error: unknown): string {
       ? Object.values(response.errors).flat()[0]
       : undefined;
 
-    return (
+    const message =
       firstValidationError ??
       response?.message ??
-      "The request could not be completed."
-    );
+      "The request could not be completed.";
+
+    if (/SQLSTATE|stack trace|secret|token/i.test(message)) {
+      return "The request could not be completed.";
+    }
+
+    return message;
   }
 
   return "Unable to connect to the identity service.";
