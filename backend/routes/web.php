@@ -8,6 +8,7 @@ use App\Http\Controllers\Oidc\SelectAccountController;
 use App\Http\Controllers\Oidc\UserInfoController;
 use App\Http\Middleware\RequireApplicationAccessContext;
 use App\Http\Middleware\RequireOidcBearerToken;
+use App\Services\AuthService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
@@ -60,3 +61,18 @@ Route::get('/oauth/continue', function (Request $request) {
 
     return redirect()->to($intended);
 });
+
+Route::get('/logout', function (Request $request, AuthService $auth) {
+    $auth->logout($request);
+    $redirect = $request->query('redirect_uri');
+    if ($redirect && filter_var($redirect, FILTER_VALIDATE_URL)) {
+        $host = parse_url($redirect, PHP_URL_HOST);
+        if (in_array($host, ['localhost', '127.0.0.1'], true)) {
+            return redirect()->away($redirect);
+        }
+    }
+    $frontend = rtrim((string) env('FRONTEND_URL', 'http://localhost:3000'), '/');
+
+    return redirect()->away($frontend.'/login');
+})->name('logout');
+

@@ -21,13 +21,14 @@ export function getApiErrorMessage(error: unknown): string {
     if (status === 429) return "Too many requests. Wait a moment before trying again.";
     if (status && status >= 500) return "The identity service could not complete the request. Try again later.";
     const response = error.response?.data as
-      Partial<ValidationErrorResponse> | undefined;
+      (Partial<ValidationErrorResponse> & { message?: string }) | undefined;
     const firstValidationError = response?.errors
       ? Object.values(response.errors).flat()[0]
       : undefined;
 
     return (
       firstValidationError ??
+      response?.message ??
       "The request could not be completed."
     );
   }
