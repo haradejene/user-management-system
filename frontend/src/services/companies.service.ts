@@ -3,8 +3,8 @@ import type { ApiResponse, PaginatedResponse } from "@/types/api";
 import type { Company, CompanyMember } from "@/types/company";
 
 export const companiesService = {
-  async list(search = ""): Promise<PaginatedResponse<Company>> {
-    const response = await apiClient.get<PaginatedResponse<Company>>("/api/admin/companies", { params: { search: search || undefined, per_page: 100 } });
+  async list(search = "", page = 1, perPage = 100): Promise<PaginatedResponse<Company>> {
+    const response = await apiClient.get<PaginatedResponse<Company>>("/api/admin/companies", { params: { search: search || undefined, page, per_page: perPage } });
     return response.data;
   },
   async get(id: string): Promise<Company> {

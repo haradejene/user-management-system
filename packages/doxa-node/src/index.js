@@ -12,6 +12,7 @@ const { CodeExchange } = require('./exchange');
 const { ApplicationAccessValidator } = require('./access');
 const { generatePkce, randomString } = require('./crypto');
 const { createExpressAuth } = require('./adapters/express');
+const { createNextAuth } = require('./adapters/next');
 
 module.exports = {
   DoxaClient,
@@ -28,4 +29,6 @@ module.exports = {
   generatePkce,
   randomString,
   createExpressAuth,
+  createNextAuth,
 };
+

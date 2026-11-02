@@ -164,4 +164,31 @@ describe('@doxa/auth-node SDK Test Suite', () => {
 
     assert.equal(resolver.called, false);
   });
+
+  test('createNextAuth() handles login redirection and callback execution', async () => {
+    const { createNextAuth } = require('../src/adapters/next');
+    const client = new DoxaClient({
+      issuer: 'https://iam.example.com',
+      clientId: 'test-client-uuid',
+      redirectUri: 'https://app.example.com/callback',
+    });
+
+    client.discovery.getMetadata = async () => ({
+      authorization_endpoint: 'https://iam.example.com/oauth/authorize',
+      token_endpoint: 'https://iam.example.com/oauth/token',
+      jwks_uri: 'https://iam.example.com/oauth/jwks',
+    });
+
+    const nextAuth = createNextAuth(client);
+    const mockReq = {
+      headers: new Headers({ 'x-forwarded-proto': 'https' }),
+      url: 'https://app.example.com/auth/login',
+    };
+
+    const loginRes = await nextAuth.handleLogin(mockReq);
+    assert.equal(loginRes.status, 302);
+    assert.ok(loginRes.headers.get('Location').includes('https://iam.example.com/oauth/authorize'));
+    assert.ok(loginRes.headers.get('Set-Cookie').includes('doxa_tx='));
+  });
 });
+

@@ -86,3 +86,4 @@ export class TokenException extends DoxaException {}
 export function generatePkce(): { verifier: string; challenge: string; method: string };
 export function randomString(bytes?: number): string;
 export function createExpressAuth(client: DoxaClient, sessionKey?: string): any;
+export function createNextAuth(client: DoxaClient, cookieName?: string): any;
