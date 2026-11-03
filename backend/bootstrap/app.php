@@ -18,8 +18,18 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
-        // The local TLS proxy preserves Host and connects over IPv4 loopback.
-        $middleware->trustProxies(at: ['127.0.0.1'], headers: Request::HEADER_X_FORWARDED_PROTO);
+        // The local TLS proxy preserves Host and connects over loopback (IPv4 or IPv6).
+        $middleware->trustProxies(
+            at: ['127.0.0.1', '::1'],
+            headers: Request::HEADER_X_FORWARDED_FOR | Request::HEADER_X_FORWARDED_HOST | Request::HEADER_X_FORWARDED_PORT | Request::HEADER_X_FORWARDED_PROTO
+        );
+        $middleware->redirectGuestsTo(function (Request $request): string {
+            $frontend = rtrim((string) env('FRONTEND_URL', 'http://localhost:3000'), '/');
+            $isOAuthContinuation = parse_url($request->fullUrl(), PHP_URL_PATH) === '/oauth/authorize'
+                || parse_url((string) $request->session()->get('url.intended', ''), PHP_URL_PATH) === '/oauth/authorize';
+
+            return $frontend.'/login'.($isOAuthContinuation ? '?oauth_continue=1' : '');
+        });
         $middleware->trimStrings(except: ['redirect_uris.*', 'prompt']);
         $middleware->statefulApi();
         $middleware->appendToGroup('web', [EnsureAccountIsActive::class.':oauth', SelectOAuthAccount::class, OidcAuthorizationTransaction::class]);
