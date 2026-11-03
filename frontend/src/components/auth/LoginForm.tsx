@@ -77,7 +77,9 @@ export function LoginForm() {
       const toRemember = (authenticated && typeof authenticated.email === "string" && authenticated.email)
         ? authenticated
         : { email: values.email, name: values.email.split("@")[0] };
-      if (!rememberAccount(toRemember)) setStorageNotice("This browser could not save the account label.");
+      if (rememberOnBrowser) {
+        if (!rememberAccount(toRemember)) setStorageNotice("This browser could not save the account label.");
+      }
       await continueToDestination(authenticated?.email ?? values.email);
     } catch (error) {
       setRequestError(getApiErrorMessage(error));
@@ -93,9 +95,9 @@ export function LoginForm() {
 
   function chooseHint(email: string): void {
     if (user?.status === "active" && user.email.toLowerCase() === email.toLowerCase()) { void chooseCurrent(); return; }
-    reset({email, password: "", remember: false});
+    reset({email, password: "", remember: true});
     setChoosingOther(true);
-    setRememberOnBrowser(false);
+    setRememberOnBrowser(true);
     setRequestError(null);
   }
 

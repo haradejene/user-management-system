@@ -122,6 +122,8 @@ export function AuthProvider({
       async logout(): Promise<void> {
         try {
           await authService.logout();
+        } catch {
+          // Swallow any error so local sign-out always completes cleanly.
         } finally {
           setUser(null);
           setError(null);

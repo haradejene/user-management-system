@@ -48,6 +48,11 @@ export const authService = {
   },
 
   async logout(): Promise<void> {
-    await apiClient.post("/api/logout");
+    try {
+      await initializeCsrf();
+      await apiClient.post("/api/logout");
+    } catch {
+      // Ignored: session is already expired or terminated on server.
+    }
   },
 };

@@ -45,6 +45,18 @@ class EnsureAccountIsActive
 
     public function hasCurrentSession(Request $request, User $user): bool
     {
-        return $request->hasSession() && $request->session()->get('auth_session_version') === $user->session_version;
+        if (! $request->hasSession()) {
+            return false;
+        }
+
+        $version = $request->session()->get('auth_session_version');
+
+        if ($version === null) {
+            $request->session()->put('auth_session_version', (int) $user->session_version);
+
+            return true;
+        }
+
+        return (int) $version === (int) $user->session_version;
     }
 }

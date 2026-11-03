@@ -29,9 +29,14 @@ export function ProtectedShell({
 
   async function handleLogout(): Promise<void> {
     setIsLoggingOut(true);
-    await logout();
-    router.replace("/login");
-    router.refresh();
+    try {
+      await logout();
+    } catch {
+      // Local sign-out must succeed even if network request fails.
+    } finally {
+      router.replace("/login");
+      router.refresh();
+    }
   }
 
   if (!user.is_system_admin) {

@@ -22,6 +22,7 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->trustProxies(at: ['127.0.0.1', '::1'], headers: Request::HEADER_X_FORWARDED_PROTO);
         $middleware->trimStrings(except: ['redirect_uris.*', 'prompt']);
         $middleware->statefulApi();
+        $middleware->validateCsrfTokens(except: ['api/logout']);
         $middleware->appendToGroup('web', [EnsureAccountIsActive::class.':oauth', SelectOAuthAccount::class, OidcAuthorizationTransaction::class]);
         $middleware->alias([
             'active' => EnsureAccountIsActive::class,
