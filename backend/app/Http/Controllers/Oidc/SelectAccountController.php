@@ -20,7 +20,7 @@ class SelectAccountController
         abort_unless($client && ! $client->revoked && $client->application, 410);
 
         return response()->json(['application' => $client->application->name])
-            ->header('Cache-Control', 'no-store')->header('Referrer-Policy', 'no-referrer');
+            ->header('Cache-Control', 'no-store')->header('Referrer-Policy', 'strict-origin-when-cross-origin');
     }
 
     public function __invoke(Request $request, AuthService $auth): RedirectResponse|JsonResponse

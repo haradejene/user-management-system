@@ -51,12 +51,6 @@ class EnsureAccountIsActive
 
         $version = $request->session()->get('auth_session_version');
 
-        if ($version === null) {
-            $request->session()->put('auth_session_version', (int) $user->session_version);
-
-            return true;
-        }
-
-        return (int) $version === (int) $user->session_version;
+        return $version !== null && (int) $version === (int) $user->session_version;
     }
 }

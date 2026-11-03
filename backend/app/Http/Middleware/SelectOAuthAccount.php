@@ -2,6 +2,7 @@
 
 namespace App\Http\Middleware;
 
+use App\Http\Middleware\EnsureAccountIsActive;
 use App\Models\OAuthClient;
 use App\Services\ApplicationAccessService;
 use Closure;
@@ -69,7 +70,7 @@ class SelectOAuthAccount
         $frontend = rtrim((string) env('FRONTEND_URL', 'http://localhost:3000'), '/');
 
         return redirect()->away($frontend.'/login?account_choice='.$token)
-            ->header('Cache-Control', 'no-store')->header('Referrer-Policy', 'no-referrer');
+            ->header('Cache-Control', 'no-store')->header('Referrer-Policy', 'strict-origin-when-cross-origin');
     }
 
     public static function authenticated(Request $request): void
