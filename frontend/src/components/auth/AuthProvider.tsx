@@ -6,6 +6,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { AuthContext } from "@/hooks/useAuth";
 import { apiClient, getApiErrorMessage } from "@/services/api-client";
 import { authService } from "@/services/auth.service";
+import { rememberAccount } from "@/services/remembered-accounts";
 import type { AuthUser, LoginInput, RegisterInput } from "@/types/auth";
 
 export function AuthProvider({
@@ -47,7 +48,11 @@ export function AuthProvider({
     setError(null);
 
     try {
-      setUser(await authService.me());
+      const currentUser = await authService.me();
+      setUser(currentUser);
+      if (currentUser?.status === "active") {
+        rememberAccount(currentUser);
+      }
     } catch (requestError) {
       setUser(null);
       if (!(
@@ -67,7 +72,12 @@ export function AuthProvider({
     authService
       .me()
       .then((currentUser) => {
-        if (isCurrent) setUser(currentUser);
+        if (isCurrent) {
+          setUser(currentUser);
+          if (currentUser?.status === "active") {
+            rememberAccount(currentUser);
+          }
+        }
       })
       .catch((requestError: unknown) => {
         if (!isCurrent) return;
@@ -97,6 +107,9 @@ export function AuthProvider({
       async login(input: LoginInput): Promise<AuthUser> {
         const authenticatedUser = await authService.login(input);
         setUser(authenticatedUser);
+        if (authenticatedUser?.status === "active") {
+          rememberAccount(authenticatedUser);
+        }
         setError(null);
         return authenticatedUser;
       },

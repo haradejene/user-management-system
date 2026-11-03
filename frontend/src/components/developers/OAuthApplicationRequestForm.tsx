@@ -262,10 +262,11 @@ export function OAuthApplicationRequestForm({
           </div>
 
           <div>
-            <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700">
+            <label htmlFor="company-select" className="block text-xs font-semibold uppercase tracking-wider text-slate-700">
               Company / Organization
             </label>
             <select
+              id="company-select"
               value={companySelection}
               onChange={(e) => setCompanySelection(e.target.value)}
               className="mt-1.5 w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white"

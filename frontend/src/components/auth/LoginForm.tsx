@@ -22,7 +22,7 @@ export function LoginForm() {
   const [requestError, setRequestError] = useState<string | null>(null);
   const [choosingOther, setChoosingOther] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
-  const [rememberOnBrowser, setRememberOnBrowser] = useState(false);
+  const [rememberOnBrowser, setRememberOnBrowser] = useState(true);
   const [choiceContext, setChoiceContext] = useState<{token: string; application: string} | null>(null);
   const [choiceFailed, setChoiceFailed] = useState<string | null>(null);
   const [isContinuing, setIsContinuing] = useState(false);
@@ -74,8 +74,11 @@ export function LoginForm() {
     setRequestError(null);
     try {
       const authenticated = await login(values);
-      if (rememberOnBrowser && !rememberAccount(authenticated)) setStorageNotice("This browser could not save the account label.");
-      await continueToDestination(authenticated.email);
+      const toRemember = (authenticated && typeof authenticated.email === "string" && authenticated.email)
+        ? authenticated
+        : { email: values.email, name: values.email.split("@")[0] };
+      if (!rememberAccount(toRemember)) setStorageNotice("This browser could not save the account label.");
+      await continueToDestination(authenticated?.email ?? values.email);
     } catch (error) {
       setRequestError(getApiErrorMessage(error));
     }
