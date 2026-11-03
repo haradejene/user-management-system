@@ -32,8 +32,13 @@ class SelectAccountController
         if ($data['choice'] !== 'cancel') {
             $user = $request->user('web');
             abort_unless($user && $user->isActive()
-                && app(EnsureAccountIsActive::class)->hasCurrentSession($request, $user)
-                && $user->getAuthIdentifier() === $choice['user_id'], 419, 'Sign in to the selected account first.');
+                && app(EnsureAccountIsActive::class)->hasCurrentSession($request, $user), 419, 'Sign in to the selected account first.');
+            if ($choice['user_id'] === null) {
+                $choice['user_id'] = $user->getAuthIdentifier();
+                $choice['binding'] = hash('sha256', serialize([$choice['query'], $user->getAuthIdentifier()]));
+            } else {
+                abort_unless($user->getAuthIdentifier() === $choice['user_id'], 419, 'Sign in to the selected account first.');
+            }
             if ($request->has('expected_email')) {
                 abort_unless($request->input('expected_email') === $user->email, 419, 'Sign in to the selected account first.');
             }
