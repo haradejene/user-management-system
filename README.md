@@ -203,7 +203,7 @@ Run from the `backend/` directory on port `8002`:
 
 ```powershell
 cd backend
-php artisan serve --host=localhost --port=8002
+php artisan serve --host=127.0.0.1 --port=8002
 ```
 
 ### 2. Start Frontend Next.js Server
