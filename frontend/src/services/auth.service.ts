@@ -42,6 +42,12 @@ export const authService = {
     return response.data.data;
   },
 
+  async switchAccount(email: string): Promise<AuthUser> {
+    await initializeCsrf();
+    const response = await apiClient.post<ApiResponse<AuthUser>>("/api/switch-account", { email });
+    return response.data.data;
+  },
+
   async me(): Promise<AuthUser> {
     const response = await apiClient.get<ApiResponse<AuthUser>>("/api/me");
     return response.data.data;

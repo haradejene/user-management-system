@@ -86,6 +86,15 @@ class AuthService
         IamActivityOccurred::dispatch('auth.login', $user, actor: $user);
         SelectOAuthAccount::authenticated($request);
 
+        $authAccounts = $request->session()->get('authenticated_accounts', []);
+        $authAccounts[strtolower($user->email)] = [
+            'id' => $user->id,
+            'email' => $user->email,
+            'name' => $user->name,
+            'version' => (int) $user->session_version,
+        ];
+        $request->session()->put('authenticated_accounts', $authAccounts);
+
         return $user;
     }
 

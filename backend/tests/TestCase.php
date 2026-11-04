@@ -10,6 +10,12 @@ abstract class TestCase extends BaseTestCase
     public function createApplication()
     {
         $app = parent::createApplication();
+
+        if (file_exists(storage_path('oauth-private.key'))) {
+            $app['config']->set('passport.private_key', str_replace("\r\n", "\n", file_get_contents(storage_path('oauth-private.key'))));
+            $app['config']->set('passport.public_key', str_replace("\r\n", "\n", file_get_contents(storage_path('oauth-public.key'))));
+        }
+
         if (env('PGSQL_TEST_SUITE')) {
             if ($app->configurationIsCached() || ! $app->environment('testing')
                 || config('database.default') !== 'pgsql') {

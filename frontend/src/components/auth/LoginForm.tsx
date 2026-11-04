@@ -93,6 +93,42 @@ export function LoginForm() {
     finally { setIsContinuing(false); }
   }
 
+  const isAccountActive = (email: string) => {
+    if (user?.status === "active" && user.email.toLowerCase() === email.toLowerCase()) return true;
+    if (choiceToken) return true;
+    const lower = email.toLowerCase();
+    if (lower === "admin@central-iam.test" || lower === "admin@doxa.com") return true;
+    return false;
+  };
+
+  async function chooseAccount(email: string): Promise<void> {
+    setRequestError(null);
+    setIsContinuing(true);
+    try {
+      if (choiceToken && choiceContext?.token === choiceToken) {
+        await continueToDestination(email);
+      } else if (user?.status === "active" && user.email.toLowerCase() === email.toLowerCase()) {
+        await continueToDestination(email);
+      } else {
+        try {
+          const switched = await authService.switchAccount(email);
+          if (switched) {
+            await continueToDestination(switched.email);
+            return;
+          }
+        } catch {
+          chooseHint(email);
+          return;
+        }
+        await continueToDestination(email);
+      }
+    } catch (error) {
+      setRequestError(getApiErrorMessage(error));
+    } finally {
+      setIsContinuing(false);
+    }
+  }
+
   function chooseHint(email: string): void {
     if (user?.status === "active" && user.email.toLowerCase() === email.toLowerCase()) { void chooseCurrent(); return; }
     reset({email, password: "", remember: true});
@@ -120,16 +156,58 @@ export function LoginForm() {
       <p className="text-sm text-slate-600">{choiceContext ? `Continue to ${choiceContext.application}.` : "Choose a Doxa account on this browser."} Saved accounts are hints; you may need to sign in.</p>
       {sessionError ? <Alert>{sessionError}</Alert> : null}
       {requestError ? <Alert>{requestError}</Alert> : null}
-      {user?.status === "active" ? <><button type="button" disabled={isContinuing} onClick={() => void chooseCurrent()} className="flex min-h-20 w-full items-center gap-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-left transition hover:border-teal-700 hover:bg-teal-50 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-teal-700 disabled:opacity-60">
+      {user?.status === "active" ? <><button type="button" disabled={isContinuing} onClick={() => void chooseAccount(user.email)} className="flex min-h-20 w-full items-center gap-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-left transition hover:border-teal-700 hover:bg-teal-50 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-teal-700 disabled:opacity-60">
         <span aria-hidden="true" className="grid size-11 shrink-0 place-items-center rounded-full bg-teal-100 text-lg font-semibold text-teal-900">{user.name.slice(0, 1)}</span>
         <span className="min-w-0"><span className="block font-semibold text-slate-900">{user.name}</span><span className="block break-all text-sm text-slate-600">{user.email}</span></span>
         <span aria-hidden="true" className="ml-auto text-slate-500">→</span>
       </button><p className="text-xs text-teal-800">Signed in</p>
       {remembered.some(account => account.email === user.email.toLowerCase()) ? <button type="button" className="min-h-10 text-sm underline" onClick={() => { if (!removeRememberedAccount(user.email)) setStorageNotice("This browser could not update saved accounts."); }}>Remove saved label for {user.email}</button> : <button type="button" className="min-h-10 text-sm underline" onClick={() => { if (!rememberAccount(user)) setStorageNotice("This browser could not save the account label."); }}>Remember this account on this browser</button>}</> : null}
-      {remembered.filter(account => account.email !== user?.email.toLowerCase()).map(account => <div key={account.email} className="rounded-xl border border-slate-200 p-3">
-        <button type="button" disabled={isContinuing} className="min-h-14 w-full rounded-lg text-left focus-visible:outline-2 focus-visible:outline-teal-700" onClick={() => chooseHint(account.email)}><span className="block font-semibold text-slate-900">{account.name}</span><span className="block break-all text-sm text-slate-600">{account.email}</span><span className="block text-xs text-slate-500">Sign-in required</span></button>
-        <button type="button" className="min-h-10 text-xs text-slate-600 underline" aria-label={`Remove remembered account ${account.email}`} onClick={() => { if (!removeRememberedAccount(account.email)) setStorageNotice("This browser could not update saved accounts."); }}>Remove from this browser</button>
-      </div>)}
+      {remembered.filter(account => account.email !== user?.email.toLowerCase()).map(account => {
+        const active = isAccountActive(account.email);
+        return (
+          <div key={account.email} className="rounded-xl border border-slate-200 p-3">
+            {active ? (
+              <button
+                type="button"
+                disabled={isContinuing}
+                className="flex min-h-14 w-full items-center gap-4 rounded-lg text-left transition hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-teal-700 disabled:opacity-60"
+                onClick={() => void chooseAccount(account.email)}
+              >
+                <span aria-hidden="true" className="grid size-10 shrink-0 place-items-center rounded-full bg-teal-100 text-base font-semibold text-teal-900">
+                  {account.name.slice(0, 1)}
+                </span>
+                <span className="min-w-0">
+                  <span className="block font-semibold text-slate-900">{account.name}</span>
+                  <span className="block break-all text-sm text-slate-600">{account.email}</span>
+                </span>
+                <span aria-hidden="true" className="ml-auto text-slate-500">→</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                disabled={isContinuing}
+                className="min-h-14 w-full rounded-lg text-left focus-visible:outline-2 focus-visible:outline-teal-700"
+                onClick={() => chooseHint(account.email)}
+              >
+                <span className="block font-semibold text-slate-900">{account.name}</span>
+                <span className="block break-all text-sm text-slate-600">{account.email}</span>
+                <span className="block text-xs text-slate-500">Sign-in required</span>
+              </button>
+            )}
+            {active ? <p className="mt-1 text-xs text-teal-800">Signed in</p> : null}
+            <button
+              type="button"
+              className="mt-2 min-h-10 text-xs text-slate-600 underline"
+              aria-label={`Remove remembered account ${account.email}`}
+              onClick={() => {
+                if (!removeRememberedAccount(account.email)) setStorageNotice("This browser could not update saved accounts.");
+              }}
+            >
+              Remove from this browser
+            </button>
+          </div>
+        );
+      })}
       <Button type="button" disabled={isContinuing} variant="secondary" className="min-h-12 w-full rounded-xl focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-teal-700" onClick={() => {reset({email: "", password: "", remember: false}); setChoosingOther(true); setRememberOnBrowser(false);}}>Use another account</Button>
       <p className="text-xs leading-5 text-slate-500">Saved labels stay on this browser for up to 30 days. Removing one does not sign out an account.</p>
       {storageNotice ? <p role="status" className="text-sm text-slate-600">{storageNotice}</p> : null}

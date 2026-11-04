@@ -10,6 +10,7 @@ use App\Http\Controllers\Auth\LoginController;
 use App\Http\Controllers\Auth\LogoutController;
 use App\Http\Controllers\Auth\MeController;
 use App\Http\Controllers\Auth\RegisterController;
+use App\Http\Controllers\Auth\SwitchAccountController;
 use App\Http\Controllers\Companies\CompanyController;
 use App\Http\Controllers\Companies\CompanyMembershipController;
 use App\Http\Controllers\Companies\CompanyStatusController;
@@ -22,6 +23,7 @@ use Illuminate\Support\Facades\Route;
 
 Route::post('/register', RegisterController::class)->middleware('throttle:register');
 Route::post('/login', LoginController::class)->middleware('throttle:login');
+Route::post('/switch-account', SwitchAccountController::class);
 
 Route::prefix('developers')->group(function (): void {
     Route::get('/sdks', [SdkDownloadController::class, 'index']);
