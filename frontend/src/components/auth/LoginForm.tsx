@@ -16,7 +16,8 @@ import { useRememberedAccounts } from "@/hooks/useRememberedAccounts";
 import { rememberAccount, removeRememberedAccount } from "@/services/remembered-accounts";
 
 export function LoginForm() {
-  const { user, isLoading, login, error: sessionError } = useAuth();
+  const auth = useAuth();
+  const { user, isLoading, login, error: sessionError } = auth;
   const router = useRouter();
   const searchParams = useSearchParams();
   const [requestError, setRequestError] = useState<string | null>(null);
@@ -65,7 +66,9 @@ export function LoginForm() {
         // eslint-disable-next-line @next/next/no-location-assign-relative-destination
         window.location.assign(`${apiBase}/oauth/continue`);
       } else {
-        router.replace("/dashboard");
+        const next = searchParams.get("next");
+        const destination = next && next.startsWith("/") ? next : "/dashboard";
+        router.replace(destination);
         router.refresh();
       }
   }
@@ -111,7 +114,9 @@ export function LoginForm() {
         await continueToDestination(email);
       } else {
         try {
-          const switched = await authService.switchAccount(email);
+          const switched = auth.switchAccount
+            ? await auth.switchAccount(email)
+            : await authService.switchAccount(email);
           if (switched) {
             await continueToDestination(switched.email);
             return;

@@ -2,7 +2,7 @@ import { AuthCard } from "@/components/auth/AuthCard";
 import { LoginForm } from "@/components/auth/LoginForm";
 import { Suspense } from "react";
 
-export const metadata = { referrer: "no-referrer" as const };
+export const metadata = { referrer: "strict-origin-when-cross-origin" as const };
 
 export default function LoginPage() {
   return (

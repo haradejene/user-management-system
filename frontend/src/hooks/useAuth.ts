@@ -9,6 +9,7 @@ export interface AuthContextValue {
   isLoading: boolean;
   error: string | null;
   login: (input: LoginInput) => Promise<AuthUser>;
+  switchAccount?: (email: string) => Promise<AuthUser>;
   register: (input: RegisterInput) => Promise<AuthUser>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;

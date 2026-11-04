@@ -113,6 +113,15 @@ export function AuthProvider({
         setError(null);
         return authenticatedUser;
       },
+      async switchAccount(email: string): Promise<AuthUser> {
+        const switched = await authService.switchAccount(email);
+        setUser(switched);
+        if (switched?.status === "active") {
+          rememberAccount(switched);
+        }
+        setError(null);
+        return switched;
+      },
       async register(input: RegisterInput): Promise<AuthUser> {
         const registeredUser = await authService.register(input);
         setUser(registeredUser);
